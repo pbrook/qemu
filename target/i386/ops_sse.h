@@ -1934,32 +1934,36 @@ SSE_HELPER_I(helper_pblendw, W, 8, FBLENDP)
 
 void glue(helper_dpps, SUFFIX)(CPUX86State *env, Reg *d, Reg *s, uint32_t mask)
 {
-    float32 iresult = float32_zero;
+    float32 prod, iresult, iresult2;
 
+    /*
+     * We must evaluate (A+B)+(C+D), not ((A+B)+C)+D
+     * to correctly round the intermediate results
+     */
     if (mask & (1 << 4)) {
-        iresult = float32_add(iresult,
-                              float32_mul(d->ZMM_S(0), s->ZMM_S(0),
-                                          &env->sse_status),
-                              &env->sse_status);
+        iresult = float32_mul(d->ZMM_S(0), s->ZMM_S(0), &env->sse_status);
+    } else {
+        iresult = float32_zero;
     }
     if (mask & (1 << 5)) {
-        iresult = float32_add(iresult,
-                              float32_mul(d->ZMM_S(1), s->ZMM_S(1),
-                                          &env->sse_status),
-                              &env->sse_status);
+        prod = float32_mul(d->ZMM_S(1), s->ZMM_S(1), &env->sse_status);
+    } else {
+        prod = float32_zero;
     }
+    iresult = float32_add(iresult, prod, &env->sse_status);
     if (mask & (1 << 6)) {
-        iresult = float32_add(iresult,
-                              float32_mul(d->ZMM_S(2), s->ZMM_S(2),
-                                          &env->sse_status),
-                              &env->sse_status);
+        iresult2 = float32_mul(d->ZMM_S(2), s->ZMM_S(2), &env->sse_status);
+    } else {
+        iresult2 = float32_zero;
     }
     if (mask & (1 << 7)) {
-        iresult = float32_add(iresult,
-                              float32_mul(d->ZMM_S(3), s->ZMM_S(3),
-                                          &env->sse_status),
-                              &env->sse_status);
+        prod = float32_mul(d->ZMM_S(3), s->ZMM_S(3), &env->sse_status);
+    } else {
+        prod = float32_zero;
     }
+    iresult2 = float32_add(iresult2, prod, &env->sse_status);
+    iresult = float32_add(iresult, iresult2, &env->sse_status);
+
     d->ZMM_S(0) = (mask & (1 << 0)) ? iresult : float32_zero;
     d->ZMM_S(1) = (mask & (1 << 1)) ? iresult : float32_zero;
     d->ZMM_S(2) = (mask & (1 << 2)) ? iresult : float32_zero;
@@ -1968,13 +1972,12 @@ void glue(helper_dpps, SUFFIX)(CPUX86State *env, Reg *d, Reg *s, uint32_t mask)
 
 void glue(helper_dppd, SUFFIX)(CPUX86State *env, Reg *d, Reg *s, uint32_t mask)
 {
-    float64 iresult = float64_zero;
+    float64 iresult;
 
     if (mask & (1 << 4)) {
-        iresult = float64_add(iresult,
-                              float64_mul(d->ZMM_D(0), s->ZMM_D(0),
-                                          &env->sse_status),
-                              &env->sse_status);
+        iresult = float64_mul(d->ZMM_D(0), s->ZMM_D(0), &env->sse_status);
+    } else {
+        iresult = float64_zero;
     }
     if (mask & (1 << 5)) {
         iresult = float64_add(iresult,
