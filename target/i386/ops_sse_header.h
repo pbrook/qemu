@@ -105,7 +105,7 @@ SSE_HELPER_L(pcmpeql, FCMPEQ)
 
 SSE_HELPER_W(pmullw, FMULLW)
 #if SHIFT == 0
-DEF_HELPER_3(glue(pmulhrw, SUFFIX), FMULHRW)
+DEF_HELPER_3(glue(pmulhrw, SUFFIX), void, env, Reg, Reg)
 #endif
 SSE_HELPER_W(pmulhuw, FMULHUW)
 SSE_HELPER_W(pmulhw, FMULHW)
@@ -137,23 +137,39 @@ DEF_HELPER_3(glue(pshufhw, SUFFIX), void, Reg, Reg, int)
 /* FPU ops */
 /* XXX: not accurate */
 
+#define SSE_HELPER_P4(name)                                             \
+    DEF_HELPER_3(glue(name ## ps, SUFFIX), void, env, Reg, Reg)         \
+    DEF_HELPER_3(glue(name ## pd, SUFFIX), void, env, Reg, Reg)
+
+#define SSE_HELPER_P3(name, ...)                                        \
+    DEF_HELPER_3(glue(name ## ps, SUFFIX), void, env, Reg, Reg)         \
+    DEF_HELPER_3(glue(name ## pd, SUFFIX), void, env, Reg, Reg)
+
+#if SHIFT == 1
+#define SSE_HELPER_S4(name)                                             \
+    SSE_HELPER_P4(name)                                                 \
+    DEF_HELPER_3(name ## ss, void, env, Reg, Reg)                       \
+    DEF_HELPER_3(name ## sd, void, env, Reg, Reg)
+#define SSE_HELPER_S3(name)                                             \
+    SSE_HELPER_P3(name)                                                 \
+    DEF_HELPER_3(name ## ss, void, env, Reg, Reg)                       \
+    DEF_HELPER_3(name ## sd, void, env, Reg, Reg)
+#else
+#define SSE_HELPER_S4(name, ...) SSE_HELPER_P4(name)
+#define SSE_HELPER_S3(name, ...) SSE_HELPER_P3(name)
+#endif
+
 DEF_HELPER_3(glue(shufps, SUFFIX), void, Reg, Reg, int)
 DEF_HELPER_3(glue(shufpd, SUFFIX), void, Reg, Reg, int)
 
-#define SSE_HELPER_S(name, F)                            \
-    DEF_HELPER_3(glue(name ## ps, SUFFIX), void, env, Reg, Reg)        \
-    DEF_HELPER_3(name ## ss, void, env, Reg, Reg)        \
-    DEF_HELPER_3(glue(name ## pd, SUFFIX), void, env, Reg, Reg)        \
-    DEF_HELPER_3(name ## sd, void, env, Reg, Reg)
+SSE_HELPER_S4(add)
+SSE_HELPER_S4(sub)
+SSE_HELPER_S4(mul)
+SSE_HELPER_S4(div)
+SSE_HELPER_S4(min)
+SSE_HELPER_S4(max)
 
-SSE_HELPER_S(add, FPU_ADD)
-SSE_HELPER_S(sub, FPU_SUB)
-SSE_HELPER_S(mul, FPU_MUL)
-SSE_HELPER_S(div, FPU_DIV)
-SSE_HELPER_S(min, FPU_MIN)
-SSE_HELPER_S(max, FPU_MAX)
-SSE_HELPER_S(sqrt, FPU_SQRT)
-
+SSE_HELPER_S3(sqrt)
 
 DEF_HELPER_3(glue(cvtps2pd, SUFFIX), void, env, Reg, Reg)
 DEF_HELPER_3(glue(cvtpd2ps, SUFFIX), void, env, Reg, Reg)
@@ -208,18 +224,12 @@ DEF_HELPER_4(extrq_i, void, env, ZMMReg, int, int)
 DEF_HELPER_3(insertq_r, void, env, ZMMReg, ZMMReg)
 DEF_HELPER_4(insertq_i, void, env, ZMMReg, int, int)
 #endif
-DEF_HELPER_3(glue(haddps, SUFFIX), void, env, ZMMReg, ZMMReg)
-DEF_HELPER_3(glue(haddpd, SUFFIX), void, env, ZMMReg, ZMMReg)
-DEF_HELPER_3(glue(hsubps, SUFFIX), void, env, ZMMReg, ZMMReg)
-DEF_HELPER_3(glue(hsubpd, SUFFIX), void, env, ZMMReg, ZMMReg)
-DEF_HELPER_3(glue(addsubps, SUFFIX), void, env, ZMMReg, ZMMReg)
-DEF_HELPER_3(glue(addsubpd, SUFFIX), void, env, ZMMReg, ZMMReg)
 
-#define SSE_HELPER_CMP(name, F)                           \
-    DEF_HELPER_3(glue(name ## ps, SUFFIX), void, env, Reg, Reg)         \
-    DEF_HELPER_3(name ## ss, void, env, Reg, Reg)         \
-    DEF_HELPER_3(glue(name ## pd, SUFFIX), void, env, Reg, Reg)         \
-    DEF_HELPER_3(name ## sd, void, env, Reg, Reg)
+SSE_HELPER_P4(hadd)
+SSE_HELPER_P4(hsub)
+SSE_HELPER_P4(addsub)
+
+#define SSE_HELPER_CMP(name, F) SSE_HELPER_S4(name)
 
 SSE_HELPER_CMP(cmpeq, FPU_CMPEQ)
 SSE_HELPER_CMP(cmplt, FPU_CMPLT)
@@ -381,6 +391,9 @@ DEF_HELPER_4(glue(pclmulqdq, SUFFIX), void, env, Reg, Reg, i32)
 #undef SSE_HELPER_W
 #undef SSE_HELPER_L
 #undef SSE_HELPER_Q
-#undef SSE_HELPER_S
+#undef SSE_HELPER_S3
+#undef SSE_HELPER_S4
+#undef SSE_HELPER_P3
+#undef SSE_HELPER_P4
 #undef SSE_HELPER_CMP
 #undef UNPCK_OP
