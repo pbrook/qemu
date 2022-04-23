@@ -1196,44 +1196,88 @@ void helper_insertq_i(CPUX86State *env, ZMMReg *d, int index, int length)
     d->ZMM_Q(0) = helper_insertq(d->ZMM_Q(0), index, length);
 }
 
-void glue(helper_haddps, SUFFIX)(CPUX86State *env, ZMMReg *d, ZMMReg *s)
+void glue(helper_haddps, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
 {
-    ZMMReg r;
+    Reg *v = d;
+    float32 r0, r1, r2, r3;
 
-    r.ZMM_S(0) = float32_add(d->ZMM_S(0), d->ZMM_S(1), &env->sse_status);
-    r.ZMM_S(1) = float32_add(d->ZMM_S(2), d->ZMM_S(3), &env->sse_status);
-    r.ZMM_S(2) = float32_add(s->ZMM_S(0), s->ZMM_S(1), &env->sse_status);
-    r.ZMM_S(3) = float32_add(s->ZMM_S(2), s->ZMM_S(3), &env->sse_status);
-    MOVE(*d, r);
+    r0 = float32_add(v->ZMM_S(0), v->ZMM_S(1), &env->sse_status);
+    r1 = float32_add(v->ZMM_S(2), v->ZMM_S(3), &env->sse_status);
+    r2 = float32_add(s->ZMM_S(0), s->ZMM_S(1), &env->sse_status);
+    r3 = float32_add(s->ZMM_S(2), s->ZMM_S(3), &env->sse_status);
+    d->ZMM_S(0) = r0;
+    d->ZMM_S(1) = r1;
+    d->ZMM_S(2) = r2;
+    d->ZMM_S(3) = r3;
+#if SHIFT == 2
+    r0 = float32_add(v->ZMM_S(4), v->ZMM_S(5), &env->sse_status);
+    r1 = float32_add(v->ZMM_S(6), v->ZMM_S(7), &env->sse_status);
+    r2 = float32_add(s->ZMM_S(4), s->ZMM_S(5), &env->sse_status);
+    r3 = float32_add(s->ZMM_S(6), s->ZMM_S(7), &env->sse_status);
+    d->ZMM_S(4) = r0;
+    d->ZMM_S(5) = r1;
+    d->ZMM_S(6) = r2;
+    d->ZMM_S(7) = r3;
+#endif
 }
 
-void glue(helper_haddpd, SUFFIX)(CPUX86State *env, ZMMReg *d, ZMMReg *s)
+void glue(helper_haddpd, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
 {
-    ZMMReg r;
+    Reg *v = d;
+    float64 r0, r1;
 
-    r.ZMM_D(0) = float64_add(d->ZMM_D(0), d->ZMM_D(1), &env->sse_status);
-    r.ZMM_D(1) = float64_add(s->ZMM_D(0), s->ZMM_D(1), &env->sse_status);
-    MOVE(*d, r);
+    r0 = float64_add(v->ZMM_D(0), v->ZMM_D(1), &env->sse_status);
+    r1 = float64_add(s->ZMM_D(0), s->ZMM_D(1), &env->sse_status);
+    d->ZMM_D(0) = r0;
+    d->ZMM_D(1) = r1;
+#if SHIFT == 2
+    r0 = float64_add(v->ZMM_D(2), v->ZMM_D(3), &env->sse_status);
+    r1 = float64_add(s->ZMM_D(2), s->ZMM_D(3), &env->sse_status);
+    d->ZMM_D(2) = r0;
+    d->ZMM_D(3) = r1;
+#endif
 }
 
-void glue(helper_hsubps, SUFFIX)(CPUX86State *env, ZMMReg *d, ZMMReg *s)
+void glue(helper_hsubps, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
 {
-    ZMMReg r;
+    Reg *v = d;
+    float32 r0, r1, r2, r3;
 
-    r.ZMM_S(0) = float32_sub(d->ZMM_S(0), d->ZMM_S(1), &env->sse_status);
-    r.ZMM_S(1) = float32_sub(d->ZMM_S(2), d->ZMM_S(3), &env->sse_status);
-    r.ZMM_S(2) = float32_sub(s->ZMM_S(0), s->ZMM_S(1), &env->sse_status);
-    r.ZMM_S(3) = float32_sub(s->ZMM_S(2), s->ZMM_S(3), &env->sse_status);
-    MOVE(*d, r);
+    r0 = float32_sub(v->ZMM_S(0), v->ZMM_S(1), &env->sse_status);
+    r1 = float32_sub(v->ZMM_S(2), v->ZMM_S(3), &env->sse_status);
+    r2 = float32_sub(s->ZMM_S(0), s->ZMM_S(1), &env->sse_status);
+    r3 = float32_sub(s->ZMM_S(2), s->ZMM_S(3), &env->sse_status);
+    d->ZMM_S(0) = r0;
+    d->ZMM_S(1) = r1;
+    d->ZMM_S(2) = r2;
+    d->ZMM_S(3) = r3;
+#if SHIFT == 2
+    r0 = float32_sub(v->ZMM_S(4), v->ZMM_S(5), &env->sse_status);
+    r1 = float32_sub(v->ZMM_S(6), v->ZMM_S(7), &env->sse_status);
+    r2 = float32_sub(s->ZMM_S(4), s->ZMM_S(5), &env->sse_status);
+    r3 = float32_sub(s->ZMM_S(6), s->ZMM_S(7), &env->sse_status);
+    d->ZMM_S(4) = r0;
+    d->ZMM_S(5) = r1;
+    d->ZMM_S(6) = r2;
+    d->ZMM_S(7) = r3;
+#endif
 }
 
-void glue(helper_hsubpd, SUFFIX)(CPUX86State *env, ZMMReg *d, ZMMReg *s)
+void glue(helper_hsubpd, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
 {
-    ZMMReg r;
+    Reg *v = d;
+    float64 r0, r1;
 
-    r.ZMM_D(0) = float64_sub(d->ZMM_D(0), d->ZMM_D(1), &env->sse_status);
-    r.ZMM_D(1) = float64_sub(s->ZMM_D(0), s->ZMM_D(1), &env->sse_status);
-    MOVE(*d, r);
+    r0 = float64_sub(v->ZMM_D(0), v->ZMM_D(1), &env->sse_status);
+    r1 = float64_sub(s->ZMM_D(0), s->ZMM_D(1), &env->sse_status);
+    d->ZMM_D(0) = r0;
+    d->ZMM_D(1) = r1;
+#if SHIFT == 2
+    r0 = float64_sub(v->ZMM_D(2), v->ZMM_D(3), &env->sse_status);
+    r1 = float64_sub(s->ZMM_D(2), s->ZMM_D(3), &env->sse_status);
+    d->ZMM_D(2) = r0;
+    d->ZMM_D(3) = r1;
+#endif
 }
 
 void glue(helper_addsubps, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
