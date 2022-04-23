@@ -24,6 +24,7 @@
 #define Reg MMXReg
 #define SIZE 8
 #define XMM_ONLY(...)
+#define YMM_ONLY(...)
 #define B(n) MMX_B(n)
 #define W(n) MMX_W(n)
 #define L(n) MMX_L(n)
@@ -37,7 +38,13 @@
 #define W(n) ZMM_W(n)
 #define L(n) ZMM_L(n)
 #define Q(n) ZMM_Q(n)
+#if SHIFT == 1
 #define SUFFIX _xmm
+#define YMM_ONLY(...)
+#else
+#define SUFFIX _ymm
+#define YMM_ONLY(...) __VA_ARGS__
+#endif
 #endif
 
 /*
@@ -2337,6 +2344,7 @@ void glue(helper_aeskeygenassist, SUFFIX)(CPUX86State *env, Reg *d, Reg *s,
 
 #undef SHIFT
 #undef XMM_ONLY
+#undef YMM_ONLY
 #undef Reg
 #undef B
 #undef W
