@@ -3071,6 +3071,54 @@ void glue(helper_aeskeygenassist, SUFFIX)(CPUX86State *env, Reg *d, Reg *s,
 #endif
 #endif
 
+#if SHIFT == 2
+void helper_vzeroall(CPUX86State *env)
+{
+    int i;
+
+    for (i = 0; i < 8; i++) {
+        env->xmm_regs[i].ZMM_Q(0) = 0;
+        env->xmm_regs[i].ZMM_Q(1) = 0;
+        env->xmm_regs[i].ZMM_Q(2) = 0;
+        env->xmm_regs[i].ZMM_Q(3) = 0;
+    }
+}
+
+void helper_vzeroupper(CPUX86State *env)
+{
+    int i;
+
+    for (i = 0; i < 8; i++) {
+        env->xmm_regs[i].ZMM_Q(2) = 0;
+        env->xmm_regs[i].ZMM_Q(3) = 0;
+    }
+}
+
+#ifdef TARGET_X86_64
+void helper_vzeroall_hi8(CPUX86State *env)
+{
+    int i;
+
+    for (i = 8; i < 16; i++) {
+        env->xmm_regs[i].ZMM_Q(0) = 0;
+        env->xmm_regs[i].ZMM_Q(1) = 0;
+        env->xmm_regs[i].ZMM_Q(2) = 0;
+        env->xmm_regs[i].ZMM_Q(3) = 0;
+    }
+}
+
+void helper_vzeroupper_hi8(CPUX86State *env)
+{
+    int i;
+
+    for (i = 8; i < 16; i++) {
+        env->xmm_regs[i].ZMM_Q(2) = 0;
+        env->xmm_regs[i].ZMM_Q(3) = 0;
+    }
+}
+#endif
+#endif
+
 #undef SSE_HELPER_S
 
 #undef SHIFT

@@ -3455,9 +3455,29 @@ static void gen_sse(CPUX86State *env, DisasContext *s, int b,
         return;
     }
     if (b == 0x77) {
-        /* emms */
-        gen_helper_emms(cpu_env);
-        return;
+        if (s->prefix & PREFIX_VEX) {
+            CHECK_AVX(s);
+            if (s->vex_l) {
+                gen_helper_vzeroall(cpu_env);
+#ifdef TARGET_X86_64
+                if (CODE64(s)) {
+                    gen_helper_vzeroall_hi8(cpu_env);
+                }
+#endif
+            } else {
+                gen_helper_vzeroupper(cpu_env);
+#ifdef TARGET_X86_64
+                if (CODE64(s)) {
+                    gen_helper_vzeroupper_hi8(cpu_env);
+                }
+#endif
+            }
+            return;
+        } else {
+            /* emms */
+            gen_helper_emms(cpu_env);
+            return;
+        }
     }
     /* prepare MMX state (XXX: optimize by storing fptt and fptags in
        the static cpu state) */

@@ -411,6 +411,15 @@ DEF_HELPER_4(glue(aeskeygenassist, SUFFIX), void, env, Reg, Reg, i32)
 DEF_HELPER_5(glue(pclmulqdq, SUFFIX), void, env, Reg, Reg, Reg, i32)
 #endif
 
+#if SHIFT == 2
+DEF_HELPER_1(vzeroall, void, env)
+DEF_HELPER_1(vzeroupper, void, env)
+#ifdef TARGET_X86_64
+DEF_HELPER_1(vzeroall_hi8, void, env)
+DEF_HELPER_1(vzeroupper_hi8, void, env)
+#endif
+#endif
+
 #undef SHIFT
 #undef Reg
 #undef SUFFIX
