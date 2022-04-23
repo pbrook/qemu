@@ -2141,73 +2141,74 @@ void glue(helper_palignr, SUFFIX)(CPUX86State *env, Reg *d, Reg *s,
     }
 }
 
-#define XMM0 (env->xmm_regs[0])
+#if SHIFT >= 1
 
-#if SHIFT == 1
+#define BLEND_V128(elem, num, F, b) do {                                    \
+    d->elem(b + 0) = F(v->elem(b + 0), s->elem(b + 0), m->elem(b + 0));     \
+    d->elem(b + 1) = F(v->elem(b + 1), s->elem(b + 1), m->elem(b + 1));     \
+    if (num > 2) {                                                          \
+        d->elem(b + 2) = F(v->elem(b + 2), s->elem(b + 2), m->elem(b + 2)); \
+        d->elem(b + 3) = F(v->elem(b + 3), s->elem(b + 3), m->elem(b + 3)); \
+    }                                                                       \
+    if (num > 4) {                                                          \
+        d->elem(b + 4) = F(v->elem(b + 4), s->elem(b + 4), m->elem(b + 4)); \
+        d->elem(b + 5) = F(v->elem(b + 5), s->elem(b + 5), m->elem(b + 5)); \
+        d->elem(b + 6) = F(v->elem(b + 6), s->elem(b + 6), m->elem(b + 6)); \
+        d->elem(b + 7) = F(v->elem(b + 7), s->elem(b + 7), m->elem(b + 7)); \
+    }                                                                       \
+    if (num > 8) {                                                          \
+        d->elem(b + 8) = F(v->elem(b + 8), s->elem(b + 8), m->elem(b + 8)); \
+        d->elem(b + 9) = F(v->elem(b + 9), s->elem(b + 9), m->elem(b + 9)); \
+        d->elem(b + 10) = F(v->elem(b + 10), s->elem(b + 10), m->elem(b + 10));\
+        d->elem(b + 11) = F(v->elem(b + 11), s->elem(b + 11), m->elem(b + 11));\
+        d->elem(b + 12) = F(v->elem(b + 12), s->elem(b + 12), m->elem(b + 12));\
+        d->elem(b + 13) = F(v->elem(b + 13), s->elem(b + 13), m->elem(b + 13));\
+        d->elem(b + 14) = F(v->elem(b + 14), s->elem(b + 14), m->elem(b + 14));\
+        d->elem(b + 15) = F(v->elem(b + 15), s->elem(b + 15), m->elem(b + 15));\
+    }                                                                   \
+    } while (0)
+
 #define SSE_HELPER_V(name, elem, num, F)                                \
-    void glue(name, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)           \
+    void glue(name, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)   \
     {                                                                   \
-        d->elem(0) = F(d->elem(0), s->elem(0), XMM0.elem(0));           \
-        d->elem(1) = F(d->elem(1), s->elem(1), XMM0.elem(1));           \
-        if (num > 2) {                                                  \
-            d->elem(2) = F(d->elem(2), s->elem(2), XMM0.elem(2));       \
-            d->elem(3) = F(d->elem(3), s->elem(3), XMM0.elem(3));       \
-            if (num > 4) {                                              \
-                d->elem(4) = F(d->elem(4), s->elem(4), XMM0.elem(4));   \
-                d->elem(5) = F(d->elem(5), s->elem(5), XMM0.elem(5));   \
-                d->elem(6) = F(d->elem(6), s->elem(6), XMM0.elem(6));   \
-                d->elem(7) = F(d->elem(7), s->elem(7), XMM0.elem(7));   \
-                if (num > 8) {                                          \
-                    d->elem(8) = F(d->elem(8), s->elem(8), XMM0.elem(8)); \
-                    d->elem(9) = F(d->elem(9), s->elem(9), XMM0.elem(9)); \
-                    d->elem(10) = F(d->elem(10), s->elem(10), XMM0.elem(10)); \
-                    d->elem(11) = F(d->elem(11), s->elem(11), XMM0.elem(11)); \
-                    d->elem(12) = F(d->elem(12), s->elem(12), XMM0.elem(12)); \
-                    d->elem(13) = F(d->elem(13), s->elem(13), XMM0.elem(13)); \
-                    d->elem(14) = F(d->elem(14), s->elem(14), XMM0.elem(14)); \
-                    d->elem(15) = F(d->elem(15), s->elem(15), XMM0.elem(15)); \
-                }                                                       \
-            }                                                           \
-        }                                                               \
+        Reg *v = d;                                                     \
+        Reg *m = &env->xmm_regs[0];                                     \
+        BLEND_V128(elem, num, F, 0);                                    \
+        YMM_ONLY(BLEND_V128(elem, num, F, num);)                        \
     }
 
+#define BLEND_I128(elem, num, F, b) do {                                    \
+    d->elem(b + 0) = F(v->elem(b + 0), s->elem(b + 0), ((imm >> 0) & 1));   \
+    d->elem(b + 1) = F(v->elem(b + 1), s->elem(b + 1), ((imm >> 1) & 1));   \
+    if (num > 2) {                                                          \
+        d->elem(b + 2) = F(v->elem(b + 2), s->elem(b + 2), ((imm >> 2) & 1)); \
+        d->elem(b + 3) = F(v->elem(b + 3), s->elem(b + 3), ((imm >> 3) & 1)); \
+    }                                                                       \
+    if (num > 4) {                                                          \
+        d->elem(b + 4) = F(v->elem(b + 4), s->elem(b + 4), ((imm >> 4) & 1)); \
+        d->elem(b + 5) = F(v->elem(b + 5), s->elem(b + 5), ((imm >> 5) & 1)); \
+        d->elem(b + 6) = F(v->elem(b + 6), s->elem(b + 6), ((imm >> 6) & 1)); \
+        d->elem(b + 7) = F(v->elem(b + 7), s->elem(b + 7), ((imm >> 7) & 1)); \
+    }                                                                       \
+    } while (0)
+
 #define SSE_HELPER_I(name, elem, num, F)                                \
-    void glue(name, SUFFIX)(CPUX86State *env, Reg *d, Reg *s, uint32_t imm) \
+    void glue(name, SUFFIX)(CPUX86State *env, Reg *d, Reg *s,   \
+                            uint32_t imm)                               \
     {                                                                   \
-        d->elem(0) = F(d->elem(0), s->elem(0), ((imm >> 0) & 1));       \
-        d->elem(1) = F(d->elem(1), s->elem(1), ((imm >> 1) & 1));       \
-        if (num > 2) {                                                  \
-            d->elem(2) = F(d->elem(2), s->elem(2), ((imm >> 2) & 1));   \
-            d->elem(3) = F(d->elem(3), s->elem(3), ((imm >> 3) & 1));   \
-            if (num > 4) {                                              \
-                d->elem(4) = F(d->elem(4), s->elem(4), ((imm >> 4) & 1)); \
-                d->elem(5) = F(d->elem(5), s->elem(5), ((imm >> 5) & 1)); \
-                d->elem(6) = F(d->elem(6), s->elem(6), ((imm >> 6) & 1)); \
-                d->elem(7) = F(d->elem(7), s->elem(7), ((imm >> 7) & 1)); \
-                if (num > 8) {                                          \
-                    d->elem(8) = F(d->elem(8), s->elem(8), ((imm >> 8) & 1)); \
-                    d->elem(9) = F(d->elem(9), s->elem(9), ((imm >> 9) & 1)); \
-                    d->elem(10) = F(d->elem(10), s->elem(10),           \
-                                    ((imm >> 10) & 1));                 \
-                    d->elem(11) = F(d->elem(11), s->elem(11),           \
-                                    ((imm >> 11) & 1));                 \
-                    d->elem(12) = F(d->elem(12), s->elem(12),           \
-                                    ((imm >> 12) & 1));                 \
-                    d->elem(13) = F(d->elem(13), s->elem(13),           \
-                                    ((imm >> 13) & 1));                 \
-                    d->elem(14) = F(d->elem(14), s->elem(14),           \
-                                    ((imm >> 14) & 1));                 \
-                    d->elem(15) = F(d->elem(15), s->elem(15),           \
-                                    ((imm >> 15) & 1));                 \
-                }                                                       \
-            }                                                           \
-        }                                                               \
+        Reg *v = d;                                                     \
+        BLEND_I128(elem, num, F, 0);                                    \
+        YMM_ONLY(                                                       \
+        if (num < 8)                                                    \
+            imm >>= num;                                                \
+        BLEND_I128(elem, num, F, num);                                  \
+        )                                                               \
     }
 
 /* SSE4.1 op helpers */
-#define FBLENDVB(d, s, m) ((m & 0x80) ? s : d)
-#define FBLENDVPS(d, s, m) ((m & 0x80000000) ? s : d)
-#define FBLENDVPD(d, s, m) ((m & 0x8000000000000000LL) ? s : d)
+#define FBLENDVB(v, s, m) ((m & 0x80) ? s : v)
+#define FBLENDVPS(v, s, m) ((m & 0x80000000) ? s : v)
+#define FBLENDVPD(v, s, m) ((m & 0x8000000000000000LL) ? s : v)
 SSE_HELPER_V(helper_pblendvb, B, 16, FBLENDVB)
 SSE_HELPER_V(helper_blendvps, L, 4, FBLENDVPS)
 SSE_HELPER_V(helper_blendvpd, Q, 2, FBLENDVPD)
@@ -2521,7 +2522,7 @@ void glue(helper_roundsd, SUFFIX)(CPUX86State *env, Reg *d, Reg *s,
 }
 #endif
 
-#define FBLENDP(d, s, m) (m ? s : d)
+#define FBLENDP(v, s, m) (m ? s : v)
 SSE_HELPER_I(helper_blendps, L, 4, FBLENDP)
 SSE_HELPER_I(helper_blendpd, Q, 2, FBLENDP)
 SSE_HELPER_I(helper_pblendw, W, 8, FBLENDP)
