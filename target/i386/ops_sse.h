@@ -63,199 +63,215 @@
 #define MOVE(d, r) memcpy(&(d).B(0), &(r).B(0), SIZE)
 #endif
 
-void glue(helper_psrlw, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
-{
-    int shift;
+#if SHIFT == 0
+#define SHIFT_HELPER_BODY(n, elem, F) do {      \
+    d->elem(0) = F(s->elem(0), shift);          \
+    if ((n) > 1) {                              \
+        d->elem(1) = F(s->elem(1), shift);      \
+    }                                           \
+    if ((n) > 2) {                              \
+        d->elem(2) = F(s->elem(2), shift);      \
+        d->elem(3) = F(s->elem(3), shift);      \
+    }                                           \
+    if ((n) > 4) {                              \
+        d->elem(4) = F(s->elem(4), shift);      \
+        d->elem(5) = F(s->elem(5), shift);      \
+        d->elem(6) = F(s->elem(6), shift);      \
+        d->elem(7) = F(s->elem(7), shift);      \
+    }                                           \
+    if ((n) > 8) {                              \
+        d->elem(8) = F(s->elem(8), shift);      \
+        d->elem(9) = F(s->elem(9), shift);      \
+        d->elem(10) = F(s->elem(10), shift);    \
+        d->elem(11) = F(s->elem(11), shift);    \
+        d->elem(12) = F(s->elem(12), shift);    \
+        d->elem(13) = F(s->elem(13), shift);    \
+        d->elem(14) = F(s->elem(14), shift);    \
+        d->elem(15) = F(s->elem(15), shift);    \
+    }                                           \
+    } while (0)
 
-    if (s->Q(0) > 15) {
+#define FPSRL(x, c) ((x) >> shift)
+#define FPSRAW(x, c) ((int16_t)(x) >> shift)
+#define FPSRAL(x, c) ((int32_t)(x) >> shift)
+#define FPSLL(x, c) ((x) << shift)
+#endif
+
+void glue(helper_psrlw, SUFFIX)(CPUX86State *env, Reg *d, Reg *c)
+{
+    Reg *s = d;
+    int shift;
+    if (c->Q(0) > 15) {
         d->Q(0) = 0;
-#if SHIFT == 1
-        d->Q(1) = 0;
-#endif
+        XMM_ONLY(d->Q(1) = 0;)
+        YMM_ONLY(
+                d->Q(2) = 0;
+                d->Q(3) = 0;
+                )
     } else {
-        shift = s->B(0);
-        d->W(0) >>= shift;
-        d->W(1) >>= shift;
-        d->W(2) >>= shift;
-        d->W(3) >>= shift;
-#if SHIFT == 1
-        d->W(4) >>= shift;
-        d->W(5) >>= shift;
-        d->W(6) >>= shift;
-        d->W(7) >>= shift;
-#endif
+        shift = c->B(0);
+        SHIFT_HELPER_BODY(4 << SHIFT, W, FPSRL);
     }
 }
 
-void glue(helper_psraw, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
+void glue(helper_psllw, SUFFIX)(CPUX86State *env, Reg *d, Reg *c)
 {
+    Reg *s = d;
     int shift;
+    if (c->Q(0) > 15) {
+        d->Q(0) = 0;
+        XMM_ONLY(d->Q(1) = 0;)
+        YMM_ONLY(
+                d->Q(2) = 0;
+                d->Q(3) = 0;
+                )
+    } else {
+        shift = c->B(0);
+        SHIFT_HELPER_BODY(4 << SHIFT, W, FPSLL);
+    }
+}
 
-    if (s->Q(0) > 15) {
+void glue(helper_psraw, SUFFIX)(CPUX86State *env, Reg *d, Reg *c)
+{
+    Reg *s = d;
+    int shift;
+    if (c->Q(0) > 15) {
         shift = 15;
     } else {
-        shift = s->B(0);
+        shift = c->B(0);
     }
-    d->W(0) = (int16_t)d->W(0) >> shift;
-    d->W(1) = (int16_t)d->W(1) >> shift;
-    d->W(2) = (int16_t)d->W(2) >> shift;
-    d->W(3) = (int16_t)d->W(3) >> shift;
-#if SHIFT == 1
-    d->W(4) = (int16_t)d->W(4) >> shift;
-    d->W(5) = (int16_t)d->W(5) >> shift;
-    d->W(6) = (int16_t)d->W(6) >> shift;
-    d->W(7) = (int16_t)d->W(7) >> shift;
-#endif
+    SHIFT_HELPER_BODY(4 << SHIFT, W, FPSRAW);
 }
 
-void glue(helper_psllw, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
+void glue(helper_psrld, SUFFIX)(CPUX86State *env, Reg *d, Reg *c)
 {
+    Reg *s = d;
     int shift;
-
-    if (s->Q(0) > 15) {
+    if (c->Q(0) > 31) {
         d->Q(0) = 0;
-#if SHIFT == 1
-        d->Q(1) = 0;
-#endif
+        XMM_ONLY(d->Q(1) = 0;)
+        YMM_ONLY(
+                d->Q(2) = 0;
+                d->Q(3) = 0;
+                )
     } else {
-        shift = s->B(0);
-        d->W(0) <<= shift;
-        d->W(1) <<= shift;
-        d->W(2) <<= shift;
-        d->W(3) <<= shift;
-#if SHIFT == 1
-        d->W(4) <<= shift;
-        d->W(5) <<= shift;
-        d->W(6) <<= shift;
-        d->W(7) <<= shift;
-#endif
+        shift = c->B(0);
+        SHIFT_HELPER_BODY(2 << SHIFT, L, FPSRL);
     }
 }
 
-void glue(helper_psrld, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
+void glue(helper_pslld, SUFFIX)(CPUX86State *env, Reg *d, Reg *c)
 {
+    Reg *s = d;
     int shift;
-
-    if (s->Q(0) > 31) {
+    if (c->Q(0) > 31) {
         d->Q(0) = 0;
-#if SHIFT == 1
-        d->Q(1) = 0;
-#endif
+        XMM_ONLY(d->Q(1) = 0;)
+        YMM_ONLY(
+                d->Q(2) = 0;
+                d->Q(3) = 0;
+                )
     } else {
-        shift = s->B(0);
-        d->L(0) >>= shift;
-        d->L(1) >>= shift;
-#if SHIFT == 1
-        d->L(2) >>= shift;
-        d->L(3) >>= shift;
-#endif
+        shift = c->B(0);
+        SHIFT_HELPER_BODY(2 << SHIFT, L, FPSLL);
     }
 }
 
-void glue(helper_psrad, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
+void glue(helper_psrad, SUFFIX)(CPUX86State *env, Reg *d, Reg *c)
 {
+    Reg *s = d;
     int shift;
-
-    if (s->Q(0) > 31) {
+    if (c->Q(0) > 31) {
         shift = 31;
     } else {
-        shift = s->B(0);
+        shift = c->B(0);
     }
-    d->L(0) = (int32_t)d->L(0) >> shift;
-    d->L(1) = (int32_t)d->L(1) >> shift;
-#if SHIFT == 1
-    d->L(2) = (int32_t)d->L(2) >> shift;
-    d->L(3) = (int32_t)d->L(3) >> shift;
-#endif
+    SHIFT_HELPER_BODY(2 << SHIFT, L, FPSRAL);
 }
 
-void glue(helper_pslld, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
+void glue(helper_psrlq, SUFFIX)(CPUX86State *env, Reg *d, Reg *c)
 {
+    Reg *s = d;
     int shift;
-
-    if (s->Q(0) > 31) {
+    if (c->Q(0) > 63) {
         d->Q(0) = 0;
-#if SHIFT == 1
-        d->Q(1) = 0;
-#endif
+        XMM_ONLY(d->Q(1) = 0;)
+        YMM_ONLY(
+                d->Q(2) = 0;
+                d->Q(3) = 0;
+                )
     } else {
-        shift = s->B(0);
-        d->L(0) <<= shift;
-        d->L(1) <<= shift;
-#if SHIFT == 1
-        d->L(2) <<= shift;
-        d->L(3) <<= shift;
-#endif
+        shift = c->B(0);
+        SHIFT_HELPER_BODY(1 << SHIFT, Q, FPSRL);
     }
 }
 
-void glue(helper_psrlq, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
+void glue(helper_psllq, SUFFIX)(CPUX86State *env, Reg *d, Reg *c)
 {
+    Reg *s = d;
     int shift;
-
-    if (s->Q(0) > 63) {
+    if (c->Q(0) > 63) {
         d->Q(0) = 0;
-#if SHIFT == 1
-        d->Q(1) = 0;
-#endif
+        XMM_ONLY(d->Q(1) = 0;)
+        YMM_ONLY(
+                d->Q(2) = 0;
+                d->Q(3) = 0;
+                )
     } else {
-        shift = s->B(0);
-        d->Q(0) >>= shift;
-#if SHIFT == 1
-        d->Q(1) >>= shift;
-#endif
+        shift = c->B(0);
+        SHIFT_HELPER_BODY(1 << SHIFT, Q, FPSLL);
     }
 }
 
-void glue(helper_psllq, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
+#if SHIFT >= 1
+void glue(helper_psrldq, SUFFIX)(CPUX86State *env, Reg *d, Reg *c)
 {
-    int shift;
-
-    if (s->Q(0) > 63) {
-        d->Q(0) = 0;
-#if SHIFT == 1
-        d->Q(1) = 0;
-#endif
-    } else {
-        shift = s->B(0);
-        d->Q(0) <<= shift;
-#if SHIFT == 1
-        d->Q(1) <<= shift;
-#endif
-    }
-}
-
-#if SHIFT == 1
-void glue(helper_psrldq, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
-{
+    Reg *s = d;
     int shift, i;
 
-    shift = s->L(0);
+    shift = c->L(0);
     if (shift > 16) {
         shift = 16;
     }
     for (i = 0; i < 16 - shift; i++) {
-        d->B(i) = d->B(i + shift);
+        d->B(i) = s->B(i + shift);
     }
     for (i = 16 - shift; i < 16; i++) {
         d->B(i) = 0;
     }
+#if SHIFT == 2
+    for (i = 0; i < 16 - shift; i++) {
+        d->B(i + 16) = s->B(i + 16 + shift);
+    }
+    for (i = 16 - shift; i < 16; i++) {
+        d->B(i + 16) = 0;
+    }
+#endif
 }
 
-void glue(helper_pslldq, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
+void glue(helper_pslldq, SUFFIX)(CPUX86State *env, Reg *d, Reg *c)
 {
+    Reg *s = d;
     int shift, i;
 
-    shift = s->L(0);
+    shift = c->L(0);
     if (shift > 16) {
         shift = 16;
     }
     for (i = 15; i >= shift; i--) {
-        d->B(i) = d->B(i - shift);
+        d->B(i) = s->B(i - shift);
     }
     for (i = 0; i < shift; i++) {
         d->B(i) = 0;
     }
+#if SHIFT == 2
+    for (i = 15; i >= shift; i--) {
+        d->B(i + 16) = s->B(i + 16 - shift);
+    }
+    for (i = 0; i < shift; i++) {
+        d->B(i + 16) = 0;
+    }
+#endif
 }
 #endif
 
