@@ -97,9 +97,8 @@
 #define FPSLL(x, c) ((x) << shift)
 #endif
 
-void glue(helper_psrlw, SUFFIX)(CPUX86State *env, Reg *d, Reg *c)
+void glue(helper_psrlw, SUFFIX)(CPUX86State *env, Reg *d, Reg *s, Reg *c)
 {
-    Reg *s = d;
     int shift;
     if (c->Q(0) > 15) {
         d->Q(0) = 0;
@@ -114,9 +113,8 @@ void glue(helper_psrlw, SUFFIX)(CPUX86State *env, Reg *d, Reg *c)
     }
 }
 
-void glue(helper_psllw, SUFFIX)(CPUX86State *env, Reg *d, Reg *c)
+void glue(helper_psllw, SUFFIX)(CPUX86State *env, Reg *d, Reg *s, Reg *c)
 {
-    Reg *s = d;
     int shift;
     if (c->Q(0) > 15) {
         d->Q(0) = 0;
@@ -131,9 +129,8 @@ void glue(helper_psllw, SUFFIX)(CPUX86State *env, Reg *d, Reg *c)
     }
 }
 
-void glue(helper_psraw, SUFFIX)(CPUX86State *env, Reg *d, Reg *c)
+void glue(helper_psraw, SUFFIX)(CPUX86State *env, Reg *d, Reg *s, Reg *c)
 {
-    Reg *s = d;
     int shift;
     if (c->Q(0) > 15) {
         shift = 15;
@@ -143,9 +140,8 @@ void glue(helper_psraw, SUFFIX)(CPUX86State *env, Reg *d, Reg *c)
     SHIFT_HELPER_BODY(4 << SHIFT, W, FPSRAW);
 }
 
-void glue(helper_psrld, SUFFIX)(CPUX86State *env, Reg *d, Reg *c)
+void glue(helper_psrld, SUFFIX)(CPUX86State *env, Reg *d, Reg *s, Reg *c)
 {
-    Reg *s = d;
     int shift;
     if (c->Q(0) > 31) {
         d->Q(0) = 0;
@@ -160,9 +156,8 @@ void glue(helper_psrld, SUFFIX)(CPUX86State *env, Reg *d, Reg *c)
     }
 }
 
-void glue(helper_pslld, SUFFIX)(CPUX86State *env, Reg *d, Reg *c)
+void glue(helper_pslld, SUFFIX)(CPUX86State *env, Reg *d, Reg *s, Reg *c)
 {
-    Reg *s = d;
     int shift;
     if (c->Q(0) > 31) {
         d->Q(0) = 0;
@@ -177,9 +172,8 @@ void glue(helper_pslld, SUFFIX)(CPUX86State *env, Reg *d, Reg *c)
     }
 }
 
-void glue(helper_psrad, SUFFIX)(CPUX86State *env, Reg *d, Reg *c)
+void glue(helper_psrad, SUFFIX)(CPUX86State *env, Reg *d, Reg *s, Reg *c)
 {
-    Reg *s = d;
     int shift;
     if (c->Q(0) > 31) {
         shift = 31;
@@ -189,9 +183,8 @@ void glue(helper_psrad, SUFFIX)(CPUX86State *env, Reg *d, Reg *c)
     SHIFT_HELPER_BODY(2 << SHIFT, L, FPSRAL);
 }
 
-void glue(helper_psrlq, SUFFIX)(CPUX86State *env, Reg *d, Reg *c)
+void glue(helper_psrlq, SUFFIX)(CPUX86State *env, Reg *d, Reg *s, Reg *c)
 {
-    Reg *s = d;
     int shift;
     if (c->Q(0) > 63) {
         d->Q(0) = 0;
@@ -206,9 +199,8 @@ void glue(helper_psrlq, SUFFIX)(CPUX86State *env, Reg *d, Reg *c)
     }
 }
 
-void glue(helper_psllq, SUFFIX)(CPUX86State *env, Reg *d, Reg *c)
+void glue(helper_psllq, SUFFIX)(CPUX86State *env, Reg *d, Reg *s, Reg *c)
 {
-    Reg *s = d;
     int shift;
     if (c->Q(0) > 63) {
         d->Q(0) = 0;
@@ -224,9 +216,8 @@ void glue(helper_psllq, SUFFIX)(CPUX86State *env, Reg *d, Reg *c)
 }
 
 #if SHIFT >= 1
-void glue(helper_psrldq, SUFFIX)(CPUX86State *env, Reg *d, Reg *c)
+void glue(helper_psrldq, SUFFIX)(CPUX86State *env, Reg *d, Reg *s, Reg *c)
 {
-    Reg *s = d;
     int shift, i;
 
     shift = c->L(0);
@@ -249,9 +240,8 @@ void glue(helper_psrldq, SUFFIX)(CPUX86State *env, Reg *d, Reg *c)
 #endif
 }
 
-void glue(helper_pslldq, SUFFIX)(CPUX86State *env, Reg *d, Reg *c)
+void glue(helper_pslldq, SUFFIX)(CPUX86State *env, Reg *d, Reg *s, Reg *c)
 {
-    Reg *s = d;
     int shift, i;
 
     shift = c->L(0);
@@ -321,9 +311,8 @@ void glue(helper_pslldq, SUFFIX)(CPUX86State *env, Reg *d, Reg *c)
     }
 
 #define SSE_HELPER_B(name, F)                                   \
-    void glue(name, SUFFIX)(CPUX86State *env, Reg *d, Reg *s) \
+    void glue(name, SUFFIX)(CPUX86State *env, Reg *d, Reg *v, Reg *s) \
     {                                                           \
-        Reg *v = d;                                             \
         d->B(0) = F(v->B(0), s->B(0));                          \
         d->B(1) = F(v->B(1), s->B(1));                          \
         d->B(2) = F(v->B(2), s->B(2));                          \
@@ -363,9 +352,8 @@ void glue(helper_pslldq, SUFFIX)(CPUX86State *env, Reg *d, Reg *c)
             }
 
 #define SSE_HELPER_W(name, F)                                   \
-    void glue(name, SUFFIX)(CPUX86State *env, Reg *d, Reg *s) \
+    void glue(name, SUFFIX)(CPUX86State *env, Reg *d, Reg *v, Reg *s) \
     {                                                           \
-        Reg *v = d;                                             \
         d->W(0) = F(v->W(0), s->W(0));                          \
         d->W(1) = F(v->W(1), s->W(1));                          \
         d->W(2) = F(v->W(2), s->W(2));                          \
@@ -389,9 +377,8 @@ void glue(helper_pslldq, SUFFIX)(CPUX86State *env, Reg *d, Reg *c)
             }
 
 #define SSE_HELPER_L(name, F)                                   \
-    void glue(name, SUFFIX)(CPUX86State *env, Reg *d, Reg *s) \
+    void glue(name, SUFFIX)(CPUX86State *env, Reg *d, Reg *v, Reg *s) \
     {                                                           \
-        Reg *v = d;                                             \
         d->L(0) = F(v->L(0), s->L(0));                          \
         d->L(1) = F(v->L(1), s->L(1));                          \
         XMM_ONLY(                                               \
@@ -407,9 +394,8 @@ void glue(helper_pslldq, SUFFIX)(CPUX86State *env, Reg *d, Reg *c)
             }
 
 #define SSE_HELPER_Q(name, F)                                   \
-    void glue(name, SUFFIX)(CPUX86State *env, Reg *d, Reg *s) \
+    void glue(name, SUFFIX)(CPUX86State *env, Reg *d, Reg *v, Reg *s) \
     {                                                           \
-        Reg *v = d;                                             \
         d->Q(0) = F(v->Q(0), s->Q(0));                          \
         XMM_ONLY(                                               \
                  d->Q(1) = F(v->Q(1), s->Q(1));                 \
@@ -555,9 +541,8 @@ void glue(helper_pmulhrw, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
 SSE_HELPER_B(helper_pavgb, FAVG)
 SSE_HELPER_W(helper_pavgw, FAVG)
 
-void glue(helper_pmuludq, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
+void glue(helper_pmuludq, SUFFIX)(CPUX86State *env, Reg *d, Reg *v, Reg *s)
 {
-    Reg *v = d;
     d->Q(0) = (uint64_t)s->L(0) * (uint64_t)v->L(0);
 #if SHIFT >= 1
     d->Q(1) = (uint64_t)s->L(2) * (uint64_t)v->L(2);
@@ -568,9 +553,8 @@ void glue(helper_pmuludq, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
 #endif
 }
 
-void glue(helper_pmaddwd, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
+void glue(helper_pmaddwd, SUFFIX)(CPUX86State *env, Reg *d, Reg *v, Reg *s)
 {
-    Reg *v = d;
     int i;
 
     for (i = 0; i < (2 << SHIFT); i++) {
@@ -589,10 +573,8 @@ static inline int abs1(int a)
     }
 }
 #endif
-
-void glue(helper_psadbw, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
+void glue(helper_psadbw, SUFFIX)(CPUX86State *env, Reg *d, Reg *v, Reg *s)
 {
-    Reg *v = d;
     unsigned int val;
 
     val = 0;
@@ -701,9 +683,8 @@ void glue(helper_pshufw, SUFFIX)(Reg *d, Reg *s, int order)
     SHUFFLE4(W, s, s, 0);
 }
 #else
-void glue(helper_shufps, SUFFIX)(Reg *d, Reg *s, int order)
+void glue(helper_shufps, SUFFIX)(Reg *d, Reg *v, Reg *s, int order)
 {
-    Reg *v = d;
     uint32_t r0, r1, r2, r3;
 
     SHUFFLE4(L, v, s, 0);
@@ -712,9 +693,8 @@ void glue(helper_shufps, SUFFIX)(Reg *d, Reg *s, int order)
 #endif
 }
 
-void glue(helper_shufpd, SUFFIX)(Reg *d, Reg *s, int order)
+void glue(helper_shufpd, SUFFIX)(Reg *d, Reg *v, Reg *s, int order)
 {
-    Reg *v = d;
     uint64_t r0, r1;
 
     r0 = v->Q(order & 1);
@@ -770,9 +750,8 @@ void glue(helper_pshufhw, SUFFIX)(Reg *d, Reg *s, int order)
 
 #define SSE_HELPER_P(name, F)                                           \
     void glue(helper_ ## name ## ps, SUFFIX)(CPUX86State *env,          \
-            Reg *d, Reg *s)                                     \
+            Reg *d, Reg *v, Reg *s)                                     \
     {                                                                   \
-        Reg *v = d;                                                     \
         d->ZMM_S(0) = F(32, v->ZMM_S(0), s->ZMM_S(0));                  \
         d->ZMM_S(1) = F(32, v->ZMM_S(1), s->ZMM_S(1));                  \
         d->ZMM_S(2) = F(32, v->ZMM_S(2), s->ZMM_S(2));                  \
@@ -786,9 +765,8 @@ void glue(helper_pshufhw, SUFFIX)(Reg *d, Reg *s, int order)
     }                                                                   \
                                                                         \
     void glue(helper_ ## name ## pd, SUFFIX)(CPUX86State *env,          \
-            Reg *d, Reg *s)                                     \
+            Reg *d, Reg *v, Reg *s)                                     \
     {                                                                   \
-        Reg *v = d;                                                     \
         d->ZMM_D(0) = F(64, v->ZMM_D(0), s->ZMM_D(0));                  \
         d->ZMM_D(1) = F(64, v->ZMM_D(1), s->ZMM_D(1));                  \
         YMM_ONLY(                                                       \
@@ -802,15 +780,13 @@ void glue(helper_pshufhw, SUFFIX)(Reg *d, Reg *s, int order)
 #define SSE_HELPER_S(name, F)                                           \
     SSE_HELPER_P(name, F)                                               \
                                                                         \
-    void helper_ ## name ## ss(CPUX86State *env, Reg *d, Reg *s)\
+    void helper_ ## name ## ss(CPUX86State *env, Reg *d, Reg *v, Reg *s)\
     {                                                                   \
-        Reg *v = d;                                                     \
         d->ZMM_S(0) = F(32, v->ZMM_S(0), s->ZMM_S(0));                  \
     }                                                                   \
                                                                         \
-    void helper_ ## name ## sd(CPUX86State *env, Reg *d, Reg *s)\
+    void helper_ ## name ## sd(CPUX86State *env, Reg *d, Reg *v, Reg *s)\
     {                                                                   \
-        Reg *v = d;                                                     \
         d->ZMM_D(0) = F(64, v->ZMM_D(0), s->ZMM_D(0));                  \
     }
 
@@ -1284,9 +1260,8 @@ void helper_insertq_i(CPUX86State *env, ZMMReg *d, int index, int length)
 }
 #endif
 
-void glue(helper_haddps, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
+void glue(helper_haddps, SUFFIX)(CPUX86State *env, Reg *d, Reg *v, Reg *s)
 {
-    Reg *v = d;
     float32 r0, r1, r2, r3;
 
     r0 = float32_add(v->ZMM_S(0), v->ZMM_S(1), &env->sse_status);
@@ -1309,9 +1284,8 @@ void glue(helper_haddps, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
 #endif
 }
 
-void glue(helper_haddpd, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
+void glue(helper_haddpd, SUFFIX)(CPUX86State *env, Reg *d, Reg *v, Reg *s)
 {
-    Reg *v = d;
     float64 r0, r1;
 
     r0 = float64_add(v->ZMM_D(0), v->ZMM_D(1), &env->sse_status);
@@ -1326,9 +1300,8 @@ void glue(helper_haddpd, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
 #endif
 }
 
-void glue(helper_hsubps, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
+void glue(helper_hsubps, SUFFIX)(CPUX86State *env, Reg *d, Reg *v, Reg *s)
 {
-    Reg *v = d;
     float32 r0, r1, r2, r3;
 
     r0 = float32_sub(v->ZMM_S(0), v->ZMM_S(1), &env->sse_status);
@@ -1351,9 +1324,8 @@ void glue(helper_hsubps, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
 #endif
 }
 
-void glue(helper_hsubpd, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
+void glue(helper_hsubpd, SUFFIX)(CPUX86State *env, Reg *d, Reg *v, Reg *s)
 {
-    Reg *v = d;
     float64 r0, r1;
 
     r0 = float64_sub(v->ZMM_D(0), v->ZMM_D(1), &env->sse_status);
@@ -1368,9 +1340,8 @@ void glue(helper_hsubpd, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
 #endif
 }
 
-void glue(helper_addsubps, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
+void glue(helper_addsubps, SUFFIX)(CPUX86State *env, Reg *d, Reg *v, Reg *s)
 {
-    Reg *v = d;
     d->ZMM_S(0) = float32_sub(v->ZMM_S(0), s->ZMM_S(0), &env->sse_status);
     d->ZMM_S(1) = float32_add(v->ZMM_S(1), s->ZMM_S(1), &env->sse_status);
     d->ZMM_S(2) = float32_sub(v->ZMM_S(2), s->ZMM_S(2), &env->sse_status);
@@ -1383,9 +1354,8 @@ void glue(helper_addsubps, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
 #endif
 }
 
-void glue(helper_addsubpd, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
+void glue(helper_addsubpd, SUFFIX)(CPUX86State *env, Reg *d, Reg *v, Reg *s)
 {
-    Reg *v = d;
     d->ZMM_D(0) = float64_sub(v->ZMM_D(0), s->ZMM_D(0), &env->sse_status);
     d->ZMM_D(1) = float64_add(v->ZMM_D(1), s->ZMM_D(1), &env->sse_status);
 #if SHIFT == 2
@@ -1396,9 +1366,8 @@ void glue(helper_addsubpd, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
 
 #define SSE_HELPER_CMP_P(name, F, C)                                    \
     void glue(helper_ ## name ## ps, SUFFIX)(CPUX86State *env,          \
-                                             Reg *d, Reg *s)    \
+                                             Reg *d, Reg *v, Reg *s)    \
     {                                                                   \
-        Reg *v = d;                                                     \
         d->ZMM_L(0) = F(32, C, v->ZMM_S(0), s->ZMM_S(0));               \
         d->ZMM_L(1) = F(32, C, v->ZMM_S(1), s->ZMM_S(1));               \
         d->ZMM_L(2) = F(32, C, v->ZMM_S(2), s->ZMM_S(2));               \
@@ -1412,9 +1381,8 @@ void glue(helper_addsubpd, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
     }                                                                   \
                                                                         \
     void glue(helper_ ## name ## pd, SUFFIX)(CPUX86State *env,          \
-                                             Reg *d, Reg *s)    \
+                                             Reg *d, Reg *v, Reg *s)    \
     {                                                                   \
-        Reg *v = d;                                                     \
         d->ZMM_Q(0) = F(64, C, v->ZMM_D(0), s->ZMM_D(0));               \
         d->ZMM_Q(1) = F(64, C, v->ZMM_D(1), s->ZMM_D(1));               \
         YMM_ONLY(                                                       \
@@ -1426,15 +1394,13 @@ void glue(helper_addsubpd, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
 #if SHIFT == 1
 #define SSE_HELPER_CMP(name, F, C)                                          \
     SSE_HELPER_CMP_P(name, F, C)                                            \
-    void helper_ ## name ## ss(CPUX86State *env, Reg *d, Reg *s)    \
+    void helper_ ## name ## ss(CPUX86State *env, Reg *d, Reg *v, Reg *s)    \
     {                                                                       \
-        Reg *v = d;                                                         \
         d->ZMM_L(0) = F(32, C, v->ZMM_S(0), s->ZMM_S(0));                   \
     }                                                                       \
                                                                             \
-    void helper_ ## name ## sd(CPUX86State *env, Reg *d, Reg *s)    \
+    void helper_ ## name ## sd(CPUX86State *env, Reg *d, Reg *v, Reg *s)    \
     {                                                                       \
-        Reg *v = d;                                                         \
         d->ZMM_Q(0) = F(64, C, v->ZMM_D(0), s->ZMM_D(0));                   \
     }
 
@@ -1633,9 +1599,44 @@ uint32_t glue(helper_pmovmskb, SUFFIX)(CPUX86State *env, Reg *s)
 #define PACK_WIDTH 8
 #endif
 
-void glue(helper_packssdw, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
+#define PACK4(F, to, reg, from) do {        \
+    r[to + 0] = F((int16_t)reg->W(from + 0));   \
+    r[to + 1] = F((int16_t)reg->W(from + 1));   \
+    r[to + 2] = F((int16_t)reg->W(from + 2));   \
+    r[to + 3] = F((int16_t)reg->W(from + 3));   \
+    } while (0)
+
+#define PACK_HELPER_B(name, F) \
+void glue(helper_pack ## name, SUFFIX)(CPUX86State *env, \
+        Reg *d, Reg *v, Reg *s)                 \
+{                                               \
+    uint8_t r[PACK_WIDTH * 2];                  \
+    int i;                                      \
+    PACK4(F, 0, v, 0);                          \
+    PACK4(F, PACK_WIDTH, s, 0);                 \
+    XMM_ONLY(                                   \
+        PACK4(F, 4, v, 4);                      \
+        PACK4(F, 12, s, 4);                     \
+        )                                       \
+    for (i = 0; i < PACK_WIDTH * 2; i++) {      \
+        d->B(i) = r[i];                         \
+    }                                           \
+    YMM_ONLY(                                   \
+        PACK4(F, 0, v, 8);                      \
+        PACK4(F, 4, v, 12);                     \
+        PACK4(F, 8, s, 8);                      \
+        PACK4(F, 12, s, 12);                    \
+        for (i = 0; i < 16; i++) {              \
+            d->B(i + 16) = r[i];                \
+        }                                       \
+        )                                       \
+}
+
+PACK_HELPER_B(sswb, satsb)
+PACK_HELPER_B(uswb, satub)
+
+void glue(helper_packssdw, SUFFIX)(CPUX86State *env, Reg *d, Reg *v, Reg *s)
 {
-    Reg *v = d;
     uint16_t r[PACK_WIDTH];
     int i;
 
@@ -1670,9 +1671,8 @@ void glue(helper_packssdw, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
 #define UNPCK_OP(base_name, base)                                       \
                                                                         \
     void glue(helper_punpck ## base_name ## bw, SUFFIX)(CPUX86State *env,\
-                                                Reg *d, Reg *s) \
+                                                Reg *d, Reg *v, Reg *s) \
     {                                                                   \
-        Reg *v = d;                                                     \
         uint8_t r[PACK_WIDTH * 2];                                      \
         int i;                                                          \
                                                                         \
@@ -1721,9 +1721,8 @@ void glue(helper_packssdw, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
     }                                                                   \
                                                                         \
     void glue(helper_punpck ## base_name ## wd, SUFFIX)(CPUX86State *env,\
-                                                Reg *d, Reg *s) \
+                                                Reg *d, Reg *v, Reg *s) \
     {                                                                   \
-        Reg *v = d;                                                     \
         uint16_t r[PACK_WIDTH];                                         \
         int i;                                                          \
                                                                         \
@@ -1756,9 +1755,8 @@ void glue(helper_packssdw, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
     }                                                                   \
                                                                         \
     void glue(helper_punpck ## base_name ## dq, SUFFIX)(CPUX86State *env,\
-                                                Reg *d, Reg *s) \
+                                                Reg *d, Reg *v, Reg *s) \
     {                                                                   \
-        Reg *v = d;                                                     \
         uint32_t r[4];                                                  \
                                                                         \
         r[0] = v->L((base * (PACK_WIDTH / 4)) + 0);                     \
@@ -1785,9 +1783,8 @@ void glue(helper_packssdw, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
                                                                         \
     XMM_ONLY(                                                           \
              void glue(helper_punpck ## base_name ## qdq, SUFFIX)(      \
-                        CPUX86State *env, Reg *d, Reg *s)       \
+                        CPUX86State *env, Reg *d, Reg *v, Reg *s)       \
              {                                                          \
-                 Reg *v = d;                                            \
                  uint64_t r[2];                                         \
                                                                         \
                  r[0] = v->Q(base);                                     \
@@ -1961,9 +1958,8 @@ void helper_pswapd(CPUX86State *env, MMXReg *d, MMXReg *s)
 #endif
 
 /* SSSE3 op helpers */
-void glue(helper_pshufb, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
+void glue(helper_pshufb, SUFFIX)(CPUX86State *env, Reg *d, Reg *v, Reg *s)
 {
-    Reg *v = d;
     int i;
 #if SHIFT == 0
     uint8_t r[8];
@@ -1997,9 +1993,8 @@ void glue(helper_pshufb, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
 #if SHIFT == 0
 
 #define SSE_HELPER_HW(name, F)  \
-void glue(helper_ ## name, SUFFIX)(CPUX86State *env, Reg *d, Reg *s) \
+void glue(helper_ ## name, SUFFIX)(CPUX86State *env, Reg *d, Reg *v, Reg *s) \
 {                               \
-    Reg *v = d;                 \
     uint16_t r[4];              \
     r[0] = F(v->W(0), v->W(1)); \
     r[1] = F(v->W(2), v->W(3)); \
@@ -2012,9 +2007,8 @@ void glue(helper_ ## name, SUFFIX)(CPUX86State *env, Reg *d, Reg *s) \
 }
 
 #define SSE_HELPER_HL(name, F)  \
-void glue(helper_ ## name, SUFFIX)(CPUX86State *env, Reg *d, Reg *s) \
+void glue(helper_ ## name, SUFFIX)(CPUX86State *env, Reg *d, Reg *v, Reg *s) \
 {                               \
-    Reg *v = d;                 \
     uint32_t r0, r1;            \
     r0 = F(v->L(0), v->L(1));   \
     r1 = F(s->L(0), s->L(1));   \
@@ -2025,9 +2019,8 @@ void glue(helper_ ## name, SUFFIX)(CPUX86State *env, Reg *d, Reg *s) \
 #else
 
 #define SSE_HELPER_HW(name, F)  \
-void glue(helper_ ## name, SUFFIX)(CPUX86State *env, Reg *d, Reg *s) \
+void glue(helper_ ## name, SUFFIX)(CPUX86State *env, Reg *d, Reg *v, Reg *s) \
 {                                   \
-    Reg *v = d;                     \
     int32_t r[8];                   \
     r[0] = F(v->W(0), v->W(1));     \
     r[1] = F(v->W(2), v->W(3));     \
@@ -2066,9 +2059,8 @@ void glue(helper_ ## name, SUFFIX)(CPUX86State *env, Reg *d, Reg *s) \
 }
 
 #define SSE_HELPER_HL(name, F)  \
-void glue(helper_ ## name, SUFFIX)(CPUX86State *env, Reg *d, Reg *s) \
+void glue(helper_ ## name, SUFFIX)(CPUX86State *env, Reg *d, Reg *v, Reg *s) \
 {                               \
-    Reg *v = d;                 \
     int32_t r0, r1, r2, r3;     \
     r0 = F(v->L(0), v->L(1));   \
     r1 = F(v->L(2), v->L(3));   \
@@ -2101,9 +2093,8 @@ SSE_HELPER_HL(phsubd, FSUB)
 #undef SSE_HELPER_HW
 #undef SSE_HELPER_HL
 
-void glue(helper_pmaddubsw, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
+void glue(helper_pmaddubsw, SUFFIX)(CPUX86State *env, Reg *d, Reg *v, Reg *s)
 {
-    Reg *v = d;
     d->W(0) = satsw((int8_t)s->B(0) * (uint8_t)v->B(0) +
                     (int8_t)s->B(1) * (uint8_t)v->B(1));
     d->W(1) = satsw((int8_t)s->B(2) * (uint8_t)v->B(2) +
@@ -2148,10 +2139,9 @@ SSE_HELPER_B(helper_psignb, FSIGNB)
 SSE_HELPER_W(helper_psignw, FSIGNW)
 SSE_HELPER_L(helper_psignd, FSIGNL)
 
-void glue(helper_palignr, SUFFIX)(CPUX86State *env, Reg *d, Reg *s,
+void glue(helper_palignr, SUFFIX)(CPUX86State *env, Reg *d, Reg *v, Reg *s,
                                   int32_t shift)
 {
-    Reg *v = d;
     /* XXX could be checked during translation */
     if (shift >= (SHIFT ? 32 : 16)) {
         d->Q(0) = 0;
@@ -2224,10 +2214,9 @@ void glue(helper_palignr, SUFFIX)(CPUX86State *env, Reg *d, Reg *s,
     } while (0)
 
 #define SSE_HELPER_V(name, elem, num, F)                                \
-    void glue(name, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)   \
+    void glue(name, SUFFIX)(CPUX86State *env, Reg *d, Reg *v, Reg *s,   \
+                            Reg *m)                                     \
     {                                                                   \
-        Reg *v = d;                                                     \
-        Reg *m = &env->xmm_regs[0];                                     \
         BLEND_V128(elem, num, F, 0);                                    \
         YMM_ONLY(BLEND_V128(elem, num, F, num);)                        \
     }
@@ -2248,10 +2237,9 @@ void glue(helper_palignr, SUFFIX)(CPUX86State *env, Reg *d, Reg *s,
     } while (0)
 
 #define SSE_HELPER_I(name, elem, num, F)                                \
-    void glue(name, SUFFIX)(CPUX86State *env, Reg *d, Reg *s,   \
+    void glue(name, SUFFIX)(CPUX86State *env, Reg *d, Reg *v, Reg *s,   \
                             uint32_t imm)                               \
     {                                                                   \
-        Reg *v = d;                                                     \
         BLEND_I128(elem, num, F, 0);                                    \
         YMM_ONLY(                                                       \
         if (num < 8)                                                    \
@@ -2320,9 +2308,8 @@ SSE_HELPER_F(helper_pmovzxwd, L, 4, s->W)
 SSE_HELPER_F(helper_pmovzxwq, Q, 2, s->W)
 SSE_HELPER_F(helper_pmovzxdq, Q, 2, s->L)
 
-void glue(helper_pmuldq, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
+void glue(helper_pmuldq, SUFFIX)(CPUX86State *env, Reg *d, Reg *v, Reg *s)
 {
-    Reg *v = d;
     d->Q(0) = (int64_t)(int32_t) v->L(0) * (int32_t) s->L(0);
     d->Q(1) = (int64_t)(int32_t) v->L(2) * (int32_t) s->L(2);
 #if SHIFT == 2
@@ -2334,9 +2321,8 @@ void glue(helper_pmuldq, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
 #define FCMPEQQ(d, s) (d == s ? -1 : 0)
 SSE_HELPER_Q(helper_pcmpeqq, FCMPEQQ)
 
-void glue(helper_packusdw, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
+void glue(helper_packusdw, SUFFIX)(CPUX86State *env, Reg *d, Reg *v, Reg *s)
 {
-    Reg *v = d;
     uint16_t r[8];
 
     r[0] = satuw((int32_t) v->L(0));
@@ -2582,10 +2568,9 @@ SSE_HELPER_I(helper_blendps, L, 4, FBLENDP)
 SSE_HELPER_I(helper_blendpd, Q, 2, FBLENDP)
 SSE_HELPER_I(helper_pblendw, W, 8, FBLENDP)
 
-void glue(helper_dpps, SUFFIX)(CPUX86State *env, Reg *d, Reg *s,
+void glue(helper_dpps, SUFFIX)(CPUX86State *env, Reg *d, Reg *v, Reg *s,
                                uint32_t mask)
 {
-    Reg *v = d;
     float32 prod, iresult, iresult2;
 
     /*
@@ -2655,9 +2640,8 @@ void glue(helper_dpps, SUFFIX)(CPUX86State *env, Reg *d, Reg *s,
 #if SHIFT == 1
 /* Oddly, there is no ymm version of dppd */
 void glue(helper_dppd, SUFFIX)(CPUX86State *env,
-                               Reg *d, Reg *s, uint32_t mask)
+                               Reg *d, Reg *v, Reg *s, uint32_t mask)
 {
-    Reg *v = d;
     float64 iresult;
 
     if (mask & (1 << 4)) {
@@ -2677,10 +2661,9 @@ void glue(helper_dppd, SUFFIX)(CPUX86State *env,
 }
 #endif
 
-void glue(helper_mpsadbw, SUFFIX)(CPUX86State *env, Reg *d, Reg *s,
+void glue(helper_mpsadbw, SUFFIX)(CPUX86State *env, Reg *d, Reg *v, Reg *s,
                                   uint32_t offset)
 {
-    Reg *v = d;
     int s0 = (offset & 3) << 2;
     int d0 = (offset & 4) << 0;
     int i;
@@ -2965,10 +2948,9 @@ static void clmulq(uint64_t *dest_l, uint64_t *dest_h,
 }
 #endif
 
-void glue(helper_pclmulqdq, SUFFIX)(CPUX86State *env, Reg *d, Reg *s,
+void glue(helper_pclmulqdq, SUFFIX)(CPUX86State *env, Reg *d, Reg *v, Reg *s,
                                     uint32_t ctrl)
 {
-    Reg *v = d;
     uint64_t a, b;
 
     a = v->Q((ctrl & 1) != 0);
@@ -2981,10 +2963,10 @@ void glue(helper_pclmulqdq, SUFFIX)(CPUX86State *env, Reg *d, Reg *s,
 #endif
 }
 
-void glue(helper_aesdec, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
+void glue(helper_aesdec, SUFFIX)(CPUX86State *env, Reg *d, Reg *v, Reg *s)
 {
     int i;
-    Reg st = *d; // v
+    Reg st = *v;
     Reg rk = *s;
 
     for (i = 0 ; i < 4 ; i++) {
@@ -3004,10 +2986,10 @@ void glue(helper_aesdec, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
 #endif
 }
 
-void glue(helper_aesdeclast, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
+void glue(helper_aesdeclast, SUFFIX)(CPUX86State *env, Reg *d, Reg *v, Reg *s)
 {
     int i;
-    Reg st = *d; // v
+    Reg st = *v;
     Reg rk = *s;
 
     for (i = 0; i < 16; i++) {
@@ -3020,10 +3002,10 @@ void glue(helper_aesdeclast, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
 #endif
 }
 
-void glue(helper_aesenc, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
+void glue(helper_aesenc, SUFFIX)(CPUX86State *env, Reg *d, Reg *v, Reg *s)
 {
     int i;
-    Reg st = *d; // v
+    Reg st = *v;
     Reg rk = *s;
 
     for (i = 0 ; i < 4 ; i++) {
@@ -3043,10 +3025,10 @@ void glue(helper_aesenc, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
 #endif
 }
 
-void glue(helper_aesenclast, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
+void glue(helper_aesenclast, SUFFIX)(CPUX86State *env, Reg *d, Reg *v, Reg *s)
 {
     int i;
-    Reg st = *d; // v
+    Reg st = *v;
     Reg rk = *s;
 
     for (i = 0; i < 16; i++) {
