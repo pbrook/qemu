@@ -2780,6 +2780,18 @@ static inline void gen_op_movq_env_0(DisasContext *s, int d_offset)
 
 #define ZMM_OFFSET(reg) offsetof(CPUX86State, xmm_regs[reg])
 
+/*
+ * Clear the top half of the ymm register after a VEX.128 instruction
+ * This could be optimized by tracking this in env->hflags
+ */
+static void gen_clear_ymmh(DisasContext *s, int reg)
+{
+    if (s->prefix & PREFIX_VEX) {
+        gen_op_movq_env_0(s, offsetof(CPUX86State, xmm_regs[reg].ZMM_Q(2)));
+        gen_op_movq_env_0(s, offsetof(CPUX86State, xmm_regs[reg].ZMM_Q(3)));
+    }
+}
+
 typedef void (*SSEFunc_i_ep)(TCGv_i32 val, TCGv_ptr env, TCGv_ptr reg);
 typedef void (*SSEFunc_l_ep)(TCGv_i64 val, TCGv_ptr env, TCGv_ptr reg);
 typedef void (*SSEFunc_0_epi)(TCGv_ptr env, TCGv_ptr reg, TCGv_i32 val);
