@@ -3212,6 +3212,34 @@ SSE_HELPER_Q(helper_vpsrlvq, FPSRLVQ)
 SSE_HELPER_Q(helper_vpsravq, FPSRAVQ)
 SSE_HELPER_Q(helper_vpsllvq, FPSLLVQ)
 
+void glue(helper_vtestps, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
+{
+    uint32_t zf = (s->L(0) &  d->L(0)) | (s->L(1) &  d->L(1));
+    uint32_t cf = (s->L(0) & ~d->L(0)) | (s->L(1) & ~d->L(1));
+
+    zf |= (s->L(2) &  d->L(2)) | (s->L(3) &  d->L(3));
+    cf |= (s->L(2) & ~d->L(2)) | (s->L(3) & ~d->L(3));
+#if SHIFT == 2
+    zf |= (s->L(4) &  d->L(4)) | (s->L(5) &  d->L(5));
+    cf |= (s->L(4) & ~d->L(4)) | (s->L(5) & ~d->L(5));
+    zf |= (s->L(6) &  d->L(6)) | (s->L(7) &  d->L(7));
+    cf |= (s->L(6) & ~d->L(6)) | (s->L(7) & ~d->L(7));
+#endif
+    CC_SRC = ((zf >> 31) ? 0 : CC_Z) | ((cf >> 31) ? 0 : CC_C);
+}
+
+void glue(helper_vtestpd, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
+{
+    uint64_t zf = (s->Q(0) &  d->Q(0)) | (s->Q(1) &  d->Q(1));
+    uint64_t cf = (s->Q(0) & ~d->Q(0)) | (s->Q(1) & ~d->Q(1));
+
+#if SHIFT == 2
+    zf |= (s->Q(2) &  d->Q(2)) | (s->Q(3) &  d->Q(3));
+    cf |= (s->Q(2) & ~d->Q(2)) | (s->Q(3) & ~d->Q(3));
+#endif
+    CC_SRC = ((zf >> 63) ? 0 : CC_Z) | ((cf >> 63) ? 0 : CC_C);
+}
+
 #if SHIFT == 2
 void glue(helper_vbroadcastdq, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
 {

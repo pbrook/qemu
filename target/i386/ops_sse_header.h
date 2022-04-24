@@ -427,6 +427,8 @@ DEF_HELPER_4(glue(vpsllvd, SUFFIX), void, env, Reg, Reg, Reg)
 DEF_HELPER_4(glue(vpsrlvq, SUFFIX), void, env, Reg, Reg, Reg)
 DEF_HELPER_4(glue(vpsravq, SUFFIX), void, env, Reg, Reg, Reg)
 DEF_HELPER_4(glue(vpsllvq, SUFFIX), void, env, Reg, Reg, Reg)
+DEF_HELPER_3(glue(vtestps, SUFFIX), void, env, Reg, Reg)
+DEF_HELPER_3(glue(vtestpd, SUFFIX), void, env, Reg, Reg)
 #if SHIFT == 2
 DEF_HELPER_3(glue(vbroadcastdq, SUFFIX), void, env, Reg, Reg)
 DEF_HELPER_1(vzeroall, void, env)
