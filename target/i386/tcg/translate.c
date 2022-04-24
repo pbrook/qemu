@@ -3384,6 +3384,9 @@ static const struct SSEOpHelper_table7 sse_op_table7[256] = {
     [0x42] = BINARY_OP(mpsadbw, SSE41, SSE_OPF_MMX),
     [0x44] = BINARY_OP(pclmulqdq, PCLMULQDQ, 0),
     [0x46] = BINARY_OP(vpermdq, AVX, SSE_OPF_AVX2), /* vperm2i128 */
+    [0x4a] = BLENDV_OP(blendvps, AVX, 0),
+    [0x4b] = BLENDV_OP(blendvpd, AVX, 0),
+    [0x4c] = BLENDV_OP(pblendvb, AVX, SSE_OPF_MMX),
 #define gen_helper_pcmpestrm_ymm NULL
     [0x60] = CMP_OP(pcmpestrm, SSE42),
 #define gen_helper_pcmpestri_ymm NULL
@@ -5268,6 +5271,10 @@ static void gen_sse(CPUX86State *env, DisasContext *s, int b,
             }
 
             /* SSE */
+            if (op7.flags & SSE_OPF_BLENDV && !(s->prefix & PREFIX_VEX)) {
+                /* Only VEX encodings are valid for these blendv opcodes */
+                goto illegal_op;
+            }
             op1_offset = ZMM_OFFSET(reg);
             if (mod == 3) {
                 op2_offset = ZMM_OFFSET(rm | REX_B(s));
@@ -5316,8 +5323,15 @@ static void gen_sse(CPUX86State *env, DisasContext *s, int b,
                 op7.fn[b1].op1(cpu_env, s->ptr0, s->ptr1, tcg_const_i32(val));
             } else {
                 tcg_gen_addi_ptr(s->ptr2, cpu_env, v_offset);
-                op7.fn[b1].op2(cpu_env, s->ptr0, s->ptr2, s->ptr1,
-                               tcg_const_i32(val));
+                if (op7.flags & SSE_OPF_BLENDV) {
+                    TCGv_ptr mask = tcg_temp_new_ptr();
+                    tcg_gen_addi_ptr(mask, cpu_env, ZMM_OFFSET(val >> 4));
+                    op7.fn[b1].op3(cpu_env, s->ptr0, s->ptr2, s->ptr1, mask);
+                    tcg_temp_free_ptr(mask);
+                } else {
+                    op7.fn[b1].op2(cpu_env, s->ptr0, s->ptr2, s->ptr1,
+                                   tcg_const_i32(val));
+                }
             }
             if ((op7.flags & SSE_OPF_CMP) == 0 && s->vex_l == 0) {
                 gen_clear_ymmh(s, reg);
