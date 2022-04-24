@@ -3251,6 +3251,8 @@ static const struct SSEOpHelper_table6 sse_op_table6[256] = {
     [0x09] = BINARY_OP_MMX(psignw, SSSE3),
     [0x0a] = BINARY_OP_MMX(psignd, SSSE3),
     [0x0b] = BINARY_OP_MMX(pmulhrsw, SSSE3),
+    [0x0c] = BINARY_OP(vpermilps, AVX, 0),
+    [0x0d] = BINARY_OP(vpermilpd, AVX, 0),
     [0x10] = BLENDV_OP(pblendvb, SSE41, SSE_OPF_MMX),
     [0x14] = BLENDV_OP(blendvps, SSE41, 0),
     [0x15] = BLENDV_OP(blendvpd, SSE41, 0),
@@ -3311,6 +3313,8 @@ static const struct SSEOpHelper_table6 sse_op_table6[256] = {
 
 /* prefix [66] 0f 3a */
 static const struct SSEOpHelper_table7 sse_op_table7[256] = {
+    [0x04] = UNARY_OP(vpermilps_imm, AVX, 0),
+    [0x05] = UNARY_OP(vpermilpd_imm, AVX, 0),
     [0x08] = UNARY_OP(roundps, SSE41, 0),
     [0x09] = UNARY_OP(roundpd, SSE41, 0),
 #define gen_helper_roundss_ymm NULL

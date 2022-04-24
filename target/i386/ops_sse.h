@@ -3113,6 +3113,88 @@ void glue(helper_vbroadcastq, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
 #endif
 }
 
+void glue(helper_vpermilpd, SUFFIX)(CPUX86State *env, Reg *d, Reg *v, Reg *s)
+{
+    uint64_t r0, r1;
+
+    r0 = v->Q((s->Q(0) >> 1) & 1);
+    r1 = v->Q((s->Q(1) >> 1) & 1);
+    d->Q(0) = r0;
+    d->Q(1) = r1;
+#if SHIFT == 2
+    r0 = v->Q(((s->Q(2) >> 1) & 1) + 2);
+    r1 = v->Q(((s->Q(3) >> 1) & 1) + 2);
+    d->Q(2) = r0;
+    d->Q(3) = r1;
+#endif
+}
+
+void glue(helper_vpermilps, SUFFIX)(CPUX86State *env, Reg *d, Reg *v, Reg *s)
+{
+    uint32_t r0, r1, r2, r3;
+
+    r0 = v->L(s->L(0) & 3);
+    r1 = v->L(s->L(1) & 3);
+    r2 = v->L(s->L(2) & 3);
+    r3 = v->L(s->L(3) & 3);
+    d->L(0) = r0;
+    d->L(1) = r1;
+    d->L(2) = r2;
+    d->L(3) = r3;
+#if SHIFT == 2
+    r0 = v->L((s->L(4) & 3) + 4);
+    r1 = v->L((s->L(5) & 3) + 4);
+    r2 = v->L((s->L(6) & 3) + 4);
+    r3 = v->L((s->L(7) & 3) + 4);
+    d->L(4) = r0;
+    d->L(5) = r1;
+    d->L(6) = r2;
+    d->L(7) = r3;
+#endif
+}
+
+void glue(helper_vpermilpd_imm, SUFFIX)(CPUX86State *env,
+                                        Reg *d, Reg *s, uint32_t order)
+{
+    uint64_t r0, r1;
+
+    r0 = s->Q((order >> 0) & 1);
+    r1 = s->Q((order >> 1) & 1);
+    d->Q(0) = r0;
+    d->Q(1) = r1;
+#if SHIFT == 2
+    r0 = s->Q(((order >> 2) & 1) + 2);
+    r1 = s->Q(((order >> 3) & 1) + 2);
+    d->Q(2) = r0;
+    d->Q(3) = r1;
+#endif
+}
+
+void glue(helper_vpermilps_imm, SUFFIX)(CPUX86State *env,
+                                        Reg *d, Reg *s, uint32_t order)
+{
+    uint32_t r0, r1, r2, r3;
+
+    r0 = s->L((order >> 0) & 3);
+    r1 = s->L((order >> 2) & 3);
+    r2 = s->L((order >> 4) & 3);
+    r3 = s->L((order >> 6) & 3);
+    d->L(0) = r0;
+    d->L(1) = r1;
+    d->L(2) = r2;
+    d->L(3) = r3;
+#if SHIFT == 2
+    r0 = s->L(((order >> 0) & 3) + 4);
+    r1 = s->L(((order >> 2) & 3) + 4);
+    r2 = s->L(((order >> 4) & 3) + 4);
+    r3 = s->L(((order >> 6) & 3) + 4);
+    d->L(4) = r0;
+    d->L(5) = r1;
+    d->L(6) = r2;
+    d->L(7) = r3;
+#endif
+}
+
 #if SHIFT == 2
 void glue(helper_vbroadcastdq, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
 {
