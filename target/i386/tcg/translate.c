@@ -3293,6 +3293,9 @@ static const struct SSEOpHelper_table6 sse_op_table6[256] = {
     [0x40] = BINARY_OP(pmulld, SSE41, SSE_OPF_MMX),
 #define gen_helper_phminposuw_ymm NULL
     [0x41] = UNARY_OP(phminposuw, SSE41, 0),
+    [0x45] = BINARY_OP(vpsrlvd, AVX, SSE_OPF_AVX2),
+    [0x46] = BINARY_OP(vpsravd, AVX, SSE_OPF_AVX2),
+    [0x47] = BINARY_OP(vpsllvd, AVX, SSE_OPF_AVX2),
     /* vpbroadcastd */
     [0x58] = UNARY_OP(vbroadcastl, AVX, SSE_OPF_SCALAR | SSE_OPF_MMX),
     /* vpbroadcastq */
@@ -3356,6 +3359,15 @@ static const struct SSEOpHelper_table7 sse_op_table7[256] = {
 #undef UNARY_OP
 #undef BLENDV_OP
 #undef SPECIAL_OP
+
+#define SSE_OP(name) \
+    {gen_helper_ ## name ##_xmm, gen_helper_ ## name ##_ymm}
+static const SSEFunc_0_eppp sse_op_table8[3][2] = {
+    SSE_OP(vpsrlvq),
+    SSE_OP(vpsravq),
+    SSE_OP(vpsllvq),
+};
+#undef SSE_OP
 
 /* VEX prefix not allowed */
 #define CHECK_NO_VEX(s) do { \
@@ -4439,6 +4451,11 @@ static void gen_sse(CPUX86State *env, DisasContext *s, int b,
                         tcg_temp_free_ptr(mask);
                     } else {
                         SSEFunc_0_eppp fn = op6.fn[b1].op2;
+                        if (REX_W(s)) {
+                            if (b >= 0x45 && b <= 0x47) {
+                                fn = sse_op_table8[b - 0x45][b1 - 1];
+                            }
+                        }
                         fn(cpu_env, s->ptr0, s->ptr2, s->ptr1);
                     }
                 }

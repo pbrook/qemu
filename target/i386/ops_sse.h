@@ -3195,6 +3195,23 @@ void glue(helper_vpermilps_imm, SUFFIX)(CPUX86State *env,
 #endif
 }
 
+#if SHIFT == 1
+#define FPSRLVD(x, c) (c < 32 ? ((x) >> c) : 0)
+#define FPSRLVQ(x, c) (c < 64 ? ((x) >> c) : 0)
+#define FPSRAVD(x, c) ((int32_t)(x) >> (c < 64 ? c : 31))
+#define FPSRAVQ(x, c) ((int64_t)(x) >> (c < 64 ? c : 63))
+#define FPSLLVD(x, c) (c < 32 ? ((x) << c) : 0)
+#define FPSLLVQ(x, c) (c < 64 ? ((x) << c) : 0)
+#endif
+
+SSE_HELPER_L(helper_vpsrlvd, FPSRLVD)
+SSE_HELPER_L(helper_vpsravd, FPSRAVD)
+SSE_HELPER_L(helper_vpsllvd, FPSLLVD)
+
+SSE_HELPER_Q(helper_vpsrlvq, FPSRLVQ)
+SSE_HELPER_Q(helper_vpsravq, FPSRAVQ)
+SSE_HELPER_Q(helper_vpsllvq, FPSLLVQ)
+
 #if SHIFT == 2
 void glue(helper_vbroadcastdq, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
 {
