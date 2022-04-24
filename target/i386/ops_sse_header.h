@@ -457,6 +457,9 @@ DEF_HELPER_1(vzeroupper, void, env)
 DEF_HELPER_1(vzeroall_hi8, void, env)
 DEF_HELPER_1(vzeroupper_hi8, void, env)
 #endif
+DEF_HELPER_5(vpermdq_ymm, void, env, Reg, Reg, Reg, i32)
+DEF_HELPER_4(vpermq_ymm, void, env, Reg, Reg, i32)
+DEF_HELPER_4(vpermd_ymm, void, env, Reg, Reg, Reg)
 #endif
 #endif
 

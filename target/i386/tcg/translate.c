@@ -3258,6 +3258,8 @@ static const struct SSEOpHelper_table6 sse_op_table6[256] = {
     [0x10] = BLENDV_OP(pblendvb, SSE41, SSE_OPF_MMX),
     [0x14] = BLENDV_OP(blendvps, SSE41, 0),
     [0x15] = BLENDV_OP(blendvpd, SSE41, 0),
+#define gen_helper_vpermd_xmm NULL
+    [0x16] = BINARY_OP(vpermd, AVX, SSE_OPF_AVX2), /* vpermps */
     [0x17] = CMP_OP(ptest, SSE41),
     /* TODO:Some vbroadcast variants require AVX2 */
     [0x18] = UNARY_OP(vbroadcastl, AVX, SSE_OPF_SCALAR), /* vbroadcastss */
@@ -3287,6 +3289,7 @@ static const struct SSEOpHelper_table6 sse_op_table6[256] = {
     [0x33] = UNARY_OP(pmovzxwd, SSE41, SSE_OPF_MMX),
     [0x34] = UNARY_OP(pmovzxwq, SSE41, SSE_OPF_MMX),
     [0x35] = UNARY_OP(pmovzxdq, SSE41, SSE_OPF_MMX),
+    [0x36] = BINARY_OP(vpermd, AVX, SSE_OPF_AVX2), /* vpermd */
     [0x37] = BINARY_OP(pcmpgtq, SSE41, SSE_OPF_MMX),
     [0x38] = BINARY_OP(pminsb, SSE41, SSE_OPF_MMX),
     [0x39] = BINARY_OP(pminsd, SSE41, SSE_OPF_MMX),
@@ -3329,8 +3332,13 @@ static const struct SSEOpHelper_table6 sse_op_table6[256] = {
 
 /* prefix [66] 0f 3a */
 static const struct SSEOpHelper_table7 sse_op_table7[256] = {
+#define gen_helper_vpermq_xmm NULL
+    [0x00] = UNARY_OP(vpermq, AVX, SSE_OPF_AVX2),
+    [0x01] = UNARY_OP(vpermq, AVX, SSE_OPF_AVX2), /* vpermpd */
     [0x04] = UNARY_OP(vpermilps_imm, AVX, 0),
     [0x05] = UNARY_OP(vpermilpd_imm, AVX, 0),
+#define gen_helper_vpermdq_xmm NULL
+    [0x06] = BINARY_OP(vpermdq, AVX, 0), /* vperm2f128 */
     [0x08] = UNARY_OP(roundps, SSE41, 0),
     [0x09] = UNARY_OP(roundpd, SSE41, 0),
 #define gen_helper_roundss_ymm NULL
@@ -3353,6 +3361,7 @@ static const struct SSEOpHelper_table7 sse_op_table7[256] = {
     [0x41] = BINARY_OP(dppd, SSE41, 0),
     [0x42] = BINARY_OP(mpsadbw, SSE41, SSE_OPF_MMX),
     [0x44] = BINARY_OP(pclmulqdq, PCLMULQDQ, 0),
+    [0x46] = BINARY_OP(vpermdq, AVX, SSE_OPF_AVX2), /* vperm2i128 */
 #define gen_helper_pcmpestrm_ymm NULL
     [0x60] = CMP_OP(pcmpestrm, SSE42),
 #define gen_helper_pcmpestri_ymm NULL
