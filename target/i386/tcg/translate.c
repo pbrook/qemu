@@ -3353,6 +3353,7 @@ static const struct SSEOpHelper_table7 sse_op_table7[256] = {
 #define gen_helper_vpermq_xmm NULL
     [0x00] = UNARY_OP(vpermq, AVX, SSE_OPF_AVX2),
     [0x01] = UNARY_OP(vpermq, AVX, SSE_OPF_AVX2), /* vpermpd */
+    [0x02] = BINARY_OP(blendps, AVX, SSE_OPF_AVX2), /* vpblendd */
     [0x04] = UNARY_OP(vpermilps_imm, AVX, 0),
     [0x05] = UNARY_OP(vpermilpd_imm, AVX, 0),
 #define gen_helper_vpermdq_xmm NULL
