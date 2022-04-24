@@ -3071,7 +3071,57 @@ void glue(helper_aeskeygenassist, SUFFIX)(CPUX86State *env, Reg *d, Reg *s,
 #endif
 #endif
 
+#if SHIFT >= 1
+void glue(helper_vbroadcastb, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
+{
+    uint8_t val = s->B(0);
+    int i;
+
+    for (i = 0; i < 16 * SHIFT; i++) {
+        d->B(i) = val;
+    }
+}
+
+void glue(helper_vbroadcastw, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
+{
+    uint16_t val = s->W(0);
+    int i;
+
+    for (i = 0; i < 8 * SHIFT; i++) {
+        d->W(i) = val;
+    }
+}
+
+void glue(helper_vbroadcastl, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
+{
+    uint32_t val = s->L(0);
+    int i;
+
+    for (i = 0; i < 8 * SHIFT; i++) {
+        d->L(i) = val;
+    }
+}
+
+void glue(helper_vbroadcastq, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
+{
+    uint64_t val = s->Q(0);
+    d->Q(0) = val;
+    d->Q(1) = val;
 #if SHIFT == 2
+    d->Q(2) = val;
+    d->Q(3) = val;
+#endif
+}
+
+#if SHIFT == 2
+void glue(helper_vbroadcastdq, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
+{
+    d->Q(0) = s->Q(0);
+    d->Q(1) = s->Q(1);
+    d->Q(2) = s->Q(0);
+    d->Q(3) = s->Q(1);
+}
+
 void helper_vzeroall(CPUX86State *env)
 {
     int i;
@@ -3116,6 +3166,7 @@ void helper_vzeroupper_hi8(CPUX86State *env)
         env->xmm_regs[i].ZMM_Q(3) = 0;
     }
 }
+#endif
 #endif
 #endif
 

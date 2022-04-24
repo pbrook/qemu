@@ -3255,6 +3255,11 @@ static const struct SSEOpHelper_table6 sse_op_table6[256] = {
     [0x14] = BLENDV_OP(blendvps, SSE41, 0),
     [0x15] = BLENDV_OP(blendvpd, SSE41, 0),
     [0x17] = CMP_OP(ptest, SSE41),
+    /* TODO:Some vbroadcast variants require AVX2 */
+    [0x18] = UNARY_OP(vbroadcastl, AVX, SSE_OPF_SCALAR), /* vbroadcastss */
+    [0x19] = UNARY_OP(vbroadcastq, AVX, SSE_OPF_SCALAR), /* vbroadcastsd */
+#define gen_helper_vbroadcastdq_xmm NULL
+    [0x1a] = UNARY_OP(vbroadcastdq, AVX, SSE_OPF_SCALAR), /* vbroadcastf128 */
     [0x1c] = UNARY_OP_MMX(pabsb, SSSE3),
     [0x1d] = UNARY_OP_MMX(pabsw, SSSE3),
     [0x1e] = UNARY_OP_MMX(pabsd, SSSE3),
@@ -3286,6 +3291,16 @@ static const struct SSEOpHelper_table6 sse_op_table6[256] = {
     [0x40] = BINARY_OP(pmulld, SSE41, SSE_OPF_MMX),
 #define gen_helper_phminposuw_ymm NULL
     [0x41] = UNARY_OP(phminposuw, SSE41, 0),
+    /* vpbroadcastd */
+    [0x58] = UNARY_OP(vbroadcastl, AVX, SSE_OPF_SCALAR | SSE_OPF_MMX),
+    /* vpbroadcastq */
+    [0x59] = UNARY_OP(vbroadcastq, AVX, SSE_OPF_SCALAR | SSE_OPF_MMX),
+    /* vbroadcasti128 */
+    [0x5a] = UNARY_OP(vbroadcastdq, AVX, SSE_OPF_SCALAR | SSE_OPF_MMX),
+    /* vpbroadcastb */
+    [0x78] = UNARY_OP(vbroadcastb, AVX, SSE_OPF_SCALAR | SSE_OPF_MMX),
+    /* vpbroadcastw */
+    [0x79] = UNARY_OP(vbroadcastw, AVX, SSE_OPF_SCALAR | SSE_OPF_MMX),
 #define gen_helper_aesimc_ymm NULL
     [0xdb] = UNARY_OP(aesimc, AES, 0),
     [0xdc] = BINARY_OP(aesenc, AES, 0),
@@ -4323,6 +4338,24 @@ static void gen_sse(CPUX86State *env, DisasContext *s, int b,
                     op2_offset = offsetof(CPUX86State, xmm_t0);
                     gen_lea_modrm(env, s, modrm);
                     switch (b) {
+                    case 0x78: /* vpbroadcastb */
+                        size = 8;
+                        break;
+                    case 0x79: /* vpbroadcastw */
+                        size = 16;
+                        break;
+                    case 0x18: /* vbroadcastss */
+                    case 0x58: /* vpbroadcastd */
+                        size = 32;
+                        break;
+                    case 0x19: /* vbroadcastsd */
+                    case 0x59: /* vpbroadcastq */
+                        size = 64;
+                        break;
+                    case 0x1a: /* vbroadcastf128 */
+                    case 0x5a: /* vbroadcasti128 */
+                        size = 128;
+                        break;
                     case 0x20: case 0x30: /* pmovsxbw, pmovzxbw */
                     case 0x23: case 0x33: /* pmovsxwd, pmovzxwd */
                     case 0x25: case 0x35: /* pmovsxdq, pmovzxdq */
@@ -4346,10 +4379,17 @@ static void gen_sse(CPUX86State *env, DisasContext *s, int b,
                     default:
                         size = 128;
                     }
-                    if (s->vex_l) {
+                    /* 256 bit vbroadcast only load a single element.  */
+                    if ((op6.flags & SSE_OPF_SCALAR) == 0 && s->vex_l) {
                         size *= 2;
                     }
                     switch (size) {
+                    case 8:
+                        tcg_gen_qemu_ld_tl(s->tmp0, s->A0,
+                                           s->mem_index, MO_UB);
+                        tcg_gen_st16_tl(s->tmp0, cpu_env, op2_offset +
+                                        offsetof(ZMMReg, ZMM_B(0)));
+                        break;
                     case 16:
                         tcg_gen_qemu_ld_tl(s->tmp0, s->A0,
                                            s->mem_index, MO_LEUW);

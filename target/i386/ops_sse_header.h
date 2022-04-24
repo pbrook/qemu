@@ -411,12 +411,20 @@ DEF_HELPER_4(glue(aeskeygenassist, SUFFIX), void, env, Reg, Reg, i32)
 DEF_HELPER_5(glue(pclmulqdq, SUFFIX), void, env, Reg, Reg, Reg, i32)
 #endif
 
+/* AVX helpers */
+#if SHIFT >= 1
+DEF_HELPER_3(glue(vbroadcastb, SUFFIX), void, env, Reg, Reg)
+DEF_HELPER_3(glue(vbroadcastw, SUFFIX), void, env, Reg, Reg)
+DEF_HELPER_3(glue(vbroadcastl, SUFFIX), void, env, Reg, Reg)
+DEF_HELPER_3(glue(vbroadcastq, SUFFIX), void, env, Reg, Reg)
 #if SHIFT == 2
+DEF_HELPER_3(glue(vbroadcastdq, SUFFIX), void, env, Reg, Reg)
 DEF_HELPER_1(vzeroall, void, env)
 DEF_HELPER_1(vzeroupper, void, env)
 #ifdef TARGET_X86_64
 DEF_HELPER_1(vzeroall_hi8, void, env)
 DEF_HELPER_1(vzeroupper_hi8, void, env)
+#endif
 #endif
 #endif
 
