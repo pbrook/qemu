@@ -3315,6 +3315,10 @@ static const struct SSEOpHelper_table6 sse_op_table6[256] = {
     /* vpmaskmovd, vpmaskmovq */
     [0x8c] = BINARY_OP(vpmaskmovd, AVX, SSE_OPF_AVX2),
     [0x8e] = SPECIAL_OP(AVX), /* vpmaskmovd, vpmaskmovq */
+    [0x90] = SPECIAL_OP(AVX), /* vpgatherdd, vpgatherdq */
+    [0x91] = SPECIAL_OP(AVX), /* vpgatherqd, vpgatherqq */
+    [0x92] = SPECIAL_OP(AVX), /* vgatherdpd, vgatherdps */
+    [0x93] = SPECIAL_OP(AVX), /* vgatherqpd, vgatherqps */
 #define gen_helper_aesimc_ymm NULL
     [0xdb] = UNARY_OP(aesimc, AES, 0),
     [0xdc] = BINARY_OP(aesenc, AES, 0),
@@ -3380,6 +3384,25 @@ static const SSEFunc_0_eppp sse_op_table8[3][2] = {
 static const SSEFunc_0_eppt sse_op_table9[2][2] = {
     SSE_OP(vpmaskmovd_st),
     SSE_OP(vpmaskmovq_st),
+};
+
+static const SSEFunc_0_epppt sse_op_table10[16][2] = {
+    SSE_OP(vpgatherdd0),
+    SSE_OP(vpgatherdq0),
+    SSE_OP(vpgatherqd0),
+    SSE_OP(vpgatherqq0),
+    SSE_OP(vpgatherdd1),
+    SSE_OP(vpgatherdq1),
+    SSE_OP(vpgatherqd1),
+    SSE_OP(vpgatherqq1),
+    SSE_OP(vpgatherdd2),
+    SSE_OP(vpgatherdq2),
+    SSE_OP(vpgatherqd2),
+    SSE_OP(vpgatherqq2),
+    SSE_OP(vpgatherdd3),
+    SSE_OP(vpgatherdq3),
+    SSE_OP(vpgatherqd3),
+    SSE_OP(vpgatherqq3),
 };
 #undef SSE_OP
 
@@ -4349,6 +4372,57 @@ static void gen_sse(CPUX86State *env, DisasContext *s, int b,
                     CHECK_AVX(s);
                 }
                 op1_offset = ZMM_OFFSET(reg);
+
+                if ((b & 0xfc) == 0x90) { /* vgather */
+                    int scale, index, base;
+                    target_long disp = 0;
+                    CHECK_AVX2(s);
+                    if (mod == 3 || rm != 4) {
+                        goto illegal_op;
+                    }
+
+                    /* Vector SIB */
+                    val = x86_ldub_code(env, s);
+                    scale = (val >> 6) & 3;
+                    index = ((val >> 3) & 7) | REX_X(s);
+                    base = (val & 7) | REX_B(s);
+                    switch (mod) {
+                    case 0:
+                        if (base == 5) {
+                            base = -1;
+                            disp = (int32_t)x86_ldl_code(env, s);
+                        }
+                        break;
+                    case 1:
+                        disp = (int8_t)x86_ldub_code(env, s);
+                        break;
+                    default:
+                    case 2:
+                        disp = (int32_t)x86_ldl_code(env, s);
+                        break;
+                    }
+
+                    /* destination, index and mask registers must not overlap */
+                    if (reg == index || reg == reg_v) {
+                        goto illegal_op;
+                    }
+
+                    tcg_gen_addi_tl(s->A0, cpu_regs[base], disp);
+                    gen_add_A0_ds_seg(s);
+                    op2_offset = ZMM_OFFSET(index);
+                    v_offset = ZMM_OFFSET(reg_v);
+                    tcg_gen_addi_ptr(s->ptr0, cpu_env, op1_offset);
+                    tcg_gen_addi_ptr(s->ptr1, cpu_env, op2_offset);
+                    tcg_gen_addi_ptr(s->ptr2, cpu_env, v_offset);
+                    b1 = REX_W(s) | ((b & 1) << 1) | (scale << 2);
+                    sse_op_table10[b1][s->vex_l](cpu_env,
+                            s->ptr0, s->ptr2, s->ptr1, s->A0);
+                    if (!s->vex_l) {
+                        gen_clear_ymmh(s, reg);
+                        gen_clear_ymmh(s, reg_v);
+                    }
+                    return;
+                }
 
                 if (op6.flags & SSE_OPF_MMX) {
                     CHECK_AVX2_256(s);

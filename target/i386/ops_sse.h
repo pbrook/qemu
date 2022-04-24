@@ -3288,6 +3288,71 @@ void glue(helper_vpmaskmovq, SUFFIX)(CPUX86State *env, Reg *d, Reg *v, Reg *s)
 #endif
 }
 
+#define VGATHER_HELPER(scale)                                       \
+void glue(helper_vpgatherdd ## scale, SUFFIX)(CPUX86State *env,     \
+        Reg *d, Reg *v, Reg *s, target_ulong a0)                    \
+{                                                                   \
+    int i;                                                          \
+    for (i = 0; i < (2 << SHIFT); i++) {                            \
+        if (v->L(i) >> 31) {                                        \
+            target_ulong addr = a0                                  \
+                + ((target_ulong)(int32_t)s->L(i) << scale);        \
+            d->L(i) = cpu_ldl_data_ra(env, addr, GETPC());          \
+        }                                                           \
+        v->L(i) = 0;                                                \
+    }                                                               \
+}                                                                   \
+void glue(helper_vpgatherdq ## scale, SUFFIX)(CPUX86State *env,     \
+        Reg *d, Reg *v, Reg *s, target_ulong a0)                    \
+{                                                                   \
+    int i;                                                          \
+    for (i = 0; i < (1 << SHIFT); i++) {                            \
+        if (v->Q(i) >> 63) {                                        \
+            target_ulong addr = a0                                  \
+                + ((target_ulong)(int32_t)s->L(i) << scale);        \
+            d->Q(i) = cpu_ldq_data_ra(env, addr, GETPC());          \
+        }                                                           \
+        v->Q(i) = 0;                                                \
+    }                                                               \
+}                                                                   \
+void glue(helper_vpgatherqd ## scale, SUFFIX)(CPUX86State *env,     \
+        Reg *d, Reg *v, Reg *s, target_ulong a0)                    \
+{                                                                   \
+    int i;                                                          \
+    for (i = 0; i < (1 << SHIFT); i++) {                            \
+        if (v->L(i) >> 31) {                                        \
+            target_ulong addr = a0                                  \
+                + ((target_ulong)(int64_t)s->Q(i) << scale);        \
+            d->L(i) = cpu_ldl_data_ra(env, addr, GETPC());          \
+        }                                                           \
+        v->L(i) = 0;                                                \
+    }                                                               \
+    d->Q(SHIFT) = 0;                                                    \
+    v->Q(SHIFT) = 0;                                                    \
+    YMM_ONLY(                                                       \
+    d->Q(3) = 0;                                                    \
+    v->Q(3) = 0;                                                    \
+    )                                                               \
+}                                                                   \
+void glue(helper_vpgatherqq ## scale, SUFFIX)(CPUX86State *env,     \
+        Reg *d, Reg *v, Reg *s, target_ulong a0)                    \
+{                                                                   \
+    int i;                                                          \
+    for (i = 0; i < (1 << SHIFT); i++) {                            \
+        if (v->Q(i) >> 63) {                                        \
+            target_ulong addr = a0                                  \
+                + ((target_ulong)(int64_t)s->Q(i) << scale);        \
+            d->Q(i) = cpu_ldq_data_ra(env, addr, GETPC());          \
+        }                                                           \
+        v->Q(i) = 0;                                                \
+    }                                                               \
+}
+
+VGATHER_HELPER(0)
+VGATHER_HELPER(1)
+VGATHER_HELPER(2)
+VGATHER_HELPER(3)
+
 #if SHIFT == 2
 void glue(helper_vbroadcastdq, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
 {
