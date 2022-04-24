@@ -3240,6 +3240,54 @@ void glue(helper_vtestpd, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
     CC_SRC = ((zf >> 63) ? 0 : CC_Z) | ((cf >> 63) ? 0 : CC_C);
 }
 
+void glue(helper_vpmaskmovd_st, SUFFIX)(CPUX86State *env,
+                                        Reg *s, Reg *v, target_ulong a0)
+{
+    int i;
+
+    for (i = 0; i < (2 << SHIFT); i++) {
+        if (v->L(i) >> 31) {
+            cpu_stl_data_ra(env, a0 + i * 4, s->L(i), GETPC());
+        }
+    }
+}
+
+void glue(helper_vpmaskmovq_st, SUFFIX)(CPUX86State *env,
+                                        Reg *s, Reg *v, target_ulong a0)
+{
+    int i;
+
+    for (i = 0; i < (1 << SHIFT); i++) {
+        if (v->Q(i) >> 63) {
+            cpu_stq_data_ra(env, a0 + i * 8, s->Q(i), GETPC());
+        }
+    }
+}
+
+void glue(helper_vpmaskmovd, SUFFIX)(CPUX86State *env, Reg *d, Reg *v, Reg *s)
+{
+    d->L(0) = (v->L(0) >> 31) ? s->L(0) : 0;
+    d->L(1) = (v->L(1) >> 31) ? s->L(1) : 0;
+    d->L(2) = (v->L(2) >> 31) ? s->L(2) : 0;
+    d->L(3) = (v->L(3) >> 31) ? s->L(3) : 0;
+#if SHIFT == 2
+    d->L(4) = (v->L(4) >> 31) ? s->L(4) : 0;
+    d->L(5) = (v->L(5) >> 31) ? s->L(5) : 0;
+    d->L(6) = (v->L(6) >> 31) ? s->L(6) : 0;
+    d->L(7) = (v->L(7) >> 31) ? s->L(7) : 0;
+#endif
+}
+
+void glue(helper_vpmaskmovq, SUFFIX)(CPUX86State *env, Reg *d, Reg *v, Reg *s)
+{
+    d->Q(0) = (v->Q(0) >> 63) ? s->Q(0) : 0;
+    d->Q(1) = (v->Q(1) >> 63) ? s->Q(1) : 0;
+#if SHIFT == 2
+    d->Q(2) = (v->Q(2) >> 63) ? s->Q(2) : 0;
+    d->Q(3) = (v->Q(3) >> 63) ? s->Q(3) : 0;
+#endif
+}
+
 #if SHIFT == 2
 void glue(helper_vbroadcastdq, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
 {

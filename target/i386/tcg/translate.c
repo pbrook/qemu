@@ -3277,6 +3277,10 @@ static const struct SSEOpHelper_table6 sse_op_table6[256] = {
     [0x29] = BINARY_OP(pcmpeqq, SSE41, SSE_OPF_MMX),
     [0x2a] = SPECIAL_OP(SSE41), /* movntqda */
     [0x2b] = BINARY_OP(packusdw, SSE41, SSE_OPF_MMX),
+    [0x2c] = BINARY_OP(vpmaskmovd, AVX, 0), /* vmaskmovps */
+    [0x2d] = BINARY_OP(vpmaskmovq, AVX, 0), /* vmaskmovpd */
+    [0x2e] = SPECIAL_OP(AVX), /* vmaskmovps */
+    [0x2f] = SPECIAL_OP(AVX), /* vmaskmovpd */
     [0x30] = UNARY_OP(pmovzxbw, SSE41, SSE_OPF_MMX),
     [0x31] = UNARY_OP(pmovzxbd, SSE41, SSE_OPF_MMX),
     [0x32] = UNARY_OP(pmovzxbq, SSE41, SSE_OPF_MMX),
@@ -3308,6 +3312,9 @@ static const struct SSEOpHelper_table6 sse_op_table6[256] = {
     [0x78] = UNARY_OP(vbroadcastb, AVX, SSE_OPF_SCALAR | SSE_OPF_MMX),
     /* vpbroadcastw */
     [0x79] = UNARY_OP(vbroadcastw, AVX, SSE_OPF_SCALAR | SSE_OPF_MMX),
+    /* vpmaskmovd, vpmaskmovq */
+    [0x8c] = BINARY_OP(vpmaskmovd, AVX, SSE_OPF_AVX2),
+    [0x8e] = SPECIAL_OP(AVX), /* vpmaskmovd, vpmaskmovq */
 #define gen_helper_aesimc_ymm NULL
     [0xdb] = UNARY_OP(aesimc, AES, 0),
     [0xdc] = BINARY_OP(aesenc, AES, 0),
@@ -3368,6 +3375,11 @@ static const SSEFunc_0_eppp sse_op_table8[3][2] = {
     SSE_OP(vpsrlvq),
     SSE_OP(vpsravq),
     SSE_OP(vpsllvq),
+};
+
+static const SSEFunc_0_eppt sse_op_table9[2][2] = {
+    SSE_OP(vpmaskmovd_st),
+    SSE_OP(vpmaskmovq_st),
 };
 #undef SSE_OP
 
@@ -4394,6 +4406,22 @@ static void gen_sse(CPUX86State *env, DisasContext *s, int b,
                             gen_clear_ymmh(s, reg);
                         }
                         return;
+                    case 0x2e: /* maskmovpd */
+                        b1 = 0;
+                        goto vpmaskmov;
+                    case 0x2f: /* maskmovpd */
+                        b1 = 1;
+                        goto vpmaskmov;
+                    case 0x8e: /* vpmaskmovd, vpmaskmovq */
+                        CHECK_AVX2(s);
+                        b1 = REX_W(s);
+                    vpmaskmov:
+                        tcg_gen_addi_ptr(s->ptr0, cpu_env, op1_offset);
+                        v_offset = ZMM_OFFSET(reg_v);
+                        tcg_gen_addi_ptr(s->ptr2, cpu_env, v_offset);
+                        sse_op_table9[b1][s->vex_l](cpu_env,
+                                s->ptr0, s->ptr2, s->A0);
+                        return;
                     default:
                         size = 128;
                     }
@@ -4456,6 +4484,12 @@ static void gen_sse(CPUX86State *env, DisasContext *s, int b,
                         if (REX_W(s)) {
                             if (b >= 0x45 && b <= 0x47) {
                                 fn = sse_op_table8[b - 0x45][b1 - 1];
+                            } else if (b == 0x8c) {
+                                if (s->vex_l) {
+                                    fn = gen_helper_vpmaskmovq_ymm;
+                                } else {
+                                    fn = gen_helper_vpmaskmovq_xmm;
+                                }
                             }
                         }
                         fn(cpu_env, s->ptr0, s->ptr2, s->ptr1);
