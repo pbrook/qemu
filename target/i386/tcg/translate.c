@@ -2814,6 +2814,24 @@ static inline void gen_op_movo_ymmh(DisasContext *s, int d_offset, int s_offset)
     tcg_gen_st_i64(s->tmp1_i64, cpu_env, d_offset + offsetof(ZMMReg, ZMM_Q(3)));
 }
 
+static inline void gen_op_movo_ymm_l2h(DisasContext *s,
+                                       int d_offset, int s_offset)
+{
+    tcg_gen_ld_i64(s->tmp1_i64, cpu_env, s_offset + offsetof(ZMMReg, ZMM_Q(0)));
+    tcg_gen_st_i64(s->tmp1_i64, cpu_env, d_offset + offsetof(ZMMReg, ZMM_Q(2)));
+    tcg_gen_ld_i64(s->tmp1_i64, cpu_env, s_offset + offsetof(ZMMReg, ZMM_Q(1)));
+    tcg_gen_st_i64(s->tmp1_i64, cpu_env, d_offset + offsetof(ZMMReg, ZMM_Q(3)));
+}
+
+static inline void gen_op_movo_ymm_h2l(DisasContext *s,
+                                       int d_offset, int s_offset)
+{
+    tcg_gen_ld_i64(s->tmp1_i64, cpu_env, s_offset + offsetof(ZMMReg, ZMM_Q(2)));
+    tcg_gen_st_i64(s->tmp1_i64, cpu_env, d_offset + offsetof(ZMMReg, ZMM_Q(0)));
+    tcg_gen_ld_i64(s->tmp1_i64, cpu_env, s_offset + offsetof(ZMMReg, ZMM_Q(3)));
+    tcg_gen_st_i64(s->tmp1_i64, cpu_env, d_offset + offsetof(ZMMReg, ZMM_Q(1)));
+}
+
 static inline void gen_op_movq(DisasContext *s, int d_offset, int s_offset)
 {
     tcg_gen_ld_i64(s->tmp1_i64, cpu_env, s_offset);
@@ -3353,9 +3371,13 @@ static const struct SSEOpHelper_table7 sse_op_table7[256] = {
     [0x15] = SPECIAL_OP(SSE41), /* pextrw */
     [0x16] = SPECIAL_OP(SSE41), /* pextrd/pextrq */
     [0x17] = SPECIAL_OP(SSE41), /* extractps */
+    [0x18] = SPECIAL_OP(AVX), /* vinsertf128 */
+    [0x19] = SPECIAL_OP(AVX), /* vextractf128 */
     [0x20] = SPECIAL_OP(SSE41), /* pinsrb */
     [0x21] = SPECIAL_OP(SSE41), /* insertps */
     [0x22] = SPECIAL_OP(SSE41), /* pinsrd/pinsrq */
+    [0x38] = SPECIAL_OP(AVX), /* vinserti128 */
+    [0x39] = SPECIAL_OP(AVX), /* vextracti128 */
     [0x40] = BINARY_OP(dpps, SSE41, 0),
 #define gen_helper_dppd_ymm NULL
     [0x41] = BINARY_OP(dppd, SSE41, 0),
@@ -5144,6 +5166,62 @@ static void gen_sse(CPUX86State *env, DisasContext *s, int b,
 #endif
                     }
                     gen_clear_ymmh(s, reg);
+                    break;
+                case 0x38: /* vinserti128 */
+                    CHECK_AVX2_256(s);
+                    /* fall through */
+                case 0x18: /* vinsertf128 */
+                    CHECK_AVX(s);
+                    if ((s->prefix & PREFIX_VEX) == 0 || s->vex_l == 0) {
+                        goto illegal_op;
+                    }
+                    if (mod == 3) {
+                        if (val & 1) {
+                            gen_op_movo_ymm_l2h(s, ZMM_OFFSET(reg),
+                                                ZMM_OFFSET(rm));
+                        } else {
+                            gen_op_movo(s, ZMM_OFFSET(reg), ZMM_OFFSET(rm));
+                        }
+                    } else {
+                        if (val & 1) {
+                            gen_ldo_env_A0_ymmh(s, ZMM_OFFSET(reg));
+                        } else {
+                            gen_ldo_env_A0(s, ZMM_OFFSET(reg));
+                        }
+                    }
+                    if (reg != reg_v) {
+                        if (val & 1) {
+                            gen_op_movo(s, ZMM_OFFSET(reg), ZMM_OFFSET(reg_v));
+                        } else {
+                            gen_op_movo_ymmh(s, ZMM_OFFSET(reg),
+                                             ZMM_OFFSET(reg_v));
+                        }
+                    }
+                    break;
+                case 0x39: /* vextracti128 */
+                    CHECK_AVX2_256(s);
+                    /* fall through */
+                case 0x19: /* vextractf128 */
+                    CHECK_AVX_V0(s);
+                    if ((s->prefix & PREFIX_VEX) == 0 || s->vex_l == 0) {
+                        goto illegal_op;
+                    }
+                    if (mod == 3) {
+                        op1_offset = ZMM_OFFSET(rm);
+                        if (val & 1) {
+                            gen_op_movo_ymm_h2l(s, ZMM_OFFSET(rm),
+                                                ZMM_OFFSET(reg));
+                        } else {
+                            gen_op_movo(s, ZMM_OFFSET(rm), ZMM_OFFSET(reg));
+                        }
+                        gen_clear_ymmh(s, rm);
+                    } else{
+                        if (val & 1) {
+                            gen_sto_env_A0_ymmh(s, ZMM_OFFSET(reg));
+                        } else {
+                            gen_sto_env_A0(s, ZMM_OFFSET(reg));
+                        }
+                    }
                     break;
                 }
                 return;
