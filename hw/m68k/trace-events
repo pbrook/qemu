@@ -3,8 +3,8 @@
 # mk68564.c
 mk68564_char_out(int c) "char %c"
 mk68564_irq_set(int vector) "vector %d"
-mk68564_read(int offset, int val) "reg %d val %02x"
-mk68564_write(int offset, int val) "reg %d val %02x"
+mk68564_read(int offset, int val) "reg %d val 0x%02x"
+mk68564_write(int offset, int val) "reg %d val 0x%02x"
 
 # plexus.c
 p20_sys_dma_irq(int level) "level %d"

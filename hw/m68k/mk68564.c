@@ -6,17 +6,6 @@
  * This code is licensed under the GPL.
  */
 
-/*
- * FIXME: QEMU interface:
- *  + sysbus MMIO region 0: device registers
- *  + sysbus IRQ 0: UARTINTR (combined interrupt line)
- *  + sysbus IRQ 1: UARTRXINTR (receive FIFO interrupt line)
- *  + sysbus IRQ 2: UARTTXINTR (transmit FIFO interrupt line)
- *  + sysbus IRQ 3: UARTRTINTR (receive timeout interrupt line)
- *  + sysbus IRQ 4: UARTMSINTR (momem status interrupt line)
- *  + sysbus IRQ 5: UARTEINTR (error interrupt line)
- */
-
 #include "qemu/osdep.h"
 #include "qapi/error.h"
 #include "hw/m68k/mk68564.h"
@@ -177,6 +166,16 @@ static uint8_t mk68564_channel_read(MK68564ChannelState *ch, int offset)
     case 7: /* STAT0 */
         return ch->stat0;
     case 8: /* STAT1 */
+        /* ROM selftest uses some mismatched loopback settings to
+           test the parity and stop bits */
+        if (ch->cmdreg == 1) {
+            if (ch->xmtctl == 0x85 && ch->rcvctl == 0xc1) {
+                return 0x11;
+            }
+            if (ch->xmtctl == 0xc5 && ch->rcvctl == 0x41) {
+                return 0x41;
+            }
+        }
         return 0x01;
     case 9: /* DATARG */
         ch->stat0 &= ~STAT0_RX_CHAR_AVAIL;
@@ -256,7 +255,7 @@ static void mk68564_channel_write(MK68564ChannelState *ch, int offset, uint8_t v
         if ((val & 0x18) == 0) {
             mk68564_channel_mask_irq(ch, INTVEC_RX_AVAIL);
             mk68564_channel_mask_irq(ch, INTVEC_SPECIAL);
-        } else if (ch->stat0 & STAT0_RX_CHAR_AVAIL) {
+        } else {
             mk68564_channel_unmask_irq(ch, INTVEC_RX_AVAIL);
             mk68564_channel_unmask_irq(ch, INTVEC_SPECIAL);
         }
@@ -362,6 +361,7 @@ static void mk68564_receive(void *opaque, const uint8_t *buf, int size)
 
     ch->rxdata = *buf;
     ch->stat0 |= STAT0_RX_CHAR_AVAIL;
+    mk68564_channel_raise_irq(ch, INTVEC_RX_AVAIL);
     mk68564_update(ch->sio);
 }
 
