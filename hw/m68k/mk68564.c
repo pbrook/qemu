@@ -30,8 +30,29 @@
 #include "chardev/char-serial.h"
 #include "qemu/log.h"
 #include "qemu/module.h"
+#include "trace.h"
 
-DeviceState *mk68564_create(hwaddr addr, Chardev *chra, Chardev *chrb)
+// Status register 0 bits [sic]
+#define STAT0_RX_CHAR_AVAIL     0x01
+#define STAT0_INERPT_PENDING    0x02
+#define STAT0_TX_BUFR_EMPTY     0x04
+#define STAT0_DCD               0x08
+#define STAT0_HUNT              0x10
+#define STAT0_CTS               0x20
+#define STAT0_UNDERRUN          0x40
+#define STAT0_BREAK             0x80
+
+#define INTVEC_TX_BUFFER_EMPTY  0
+#define INTVEC_STATUS_CHANGE    1
+#define INTVEC_RX_AVAIL         2
+#define INTVEC_SPECIAL          3
+
+static void mk68564_reset_channel(MK68564ChannelState *ch);
+static void mk68564_receive(void *opaque, const uint8_t *buf, int size);
+
+static uint8_t mk68564_ack_irq(void *opaque);
+
+DeviceState *mk68564_create(hwaddr addr, Chardev *chra, Chardev *chrb, p20_irq *irq)
 {
     DeviceState *dev;
     SysBusDevice *s;
@@ -42,16 +63,97 @@ DeviceState *mk68564_create(hwaddr addr, Chardev *chra, Chardev *chrb)
     qdev_prop_set_chr(dev, "chardevb", chrb);
     sysbus_realize_and_unref(s, &error_fatal);
     sysbus_mmio_map(s, 0, addr);
+    MK68564(s)->irq = irq;
+    irq->ack = mk68564_ack_irq;
+    irq->ack_arg = MK68564(dev);
 
     return dev;
 }
 
-#if 0
 static void mk68564_update(MK68564State *s)
 {
-    // FIXME
+    uint8_t active = s->pending & ~s->irq_mask;
+    if (active & 0xf0) {
+        s->channel_a.stat0 |= STAT0_INERPT_PENDING;
+    } else {
+        s->channel_a.stat0 &= ~STAT0_INERPT_PENDING;
+    }
+    if (active & 0x0f) {
+        s->channel_b.stat0 |= STAT0_INERPT_PENDING;
+    } else {
+        s->channel_b.stat0 &= ~STAT0_INERPT_PENDING;
+    }
+    qemu_set_irq(s->irq->irq, active != 0);
 }
-#endif
+
+static void mk68564_channel_raise_irq(MK68564ChannelState *ch, int vec)
+{
+    uint8_t mask = 1 << vec;
+    if (ch->id == 0) {
+        mask <<= 4;
+    }
+    ch->sio->pending |= mask;
+    mk68564_update(ch->sio);
+}
+
+static void mk68564_channel_mask_irq(MK68564ChannelState *ch, int vec)
+{
+    uint8_t mask = 1 << vec;
+    if (ch->id == 0) {
+        mask <<= 4;
+    }
+    ch->sio->pending &= ~mask;
+    ch->sio->irq_mask |= mask;
+    mk68564_update(ch->sio);
+}
+
+static void mk68564_channel_unmask_irq(MK68564ChannelState *ch, int vec)
+{
+    uint8_t mask = 1 << vec;
+    if (ch->id == 0) {
+        mask <<= 4;
+    }
+    ch->sio->irq_mask &= ~mask;
+    mk68564_update(ch->sio);
+}
+
+static uint8_t mk68564_ack_irq(void *opaque)
+{
+    MK68564State *s = (MK68564State *)opaque;
+    uint8_t intctl = s->channel_a.intctl | s->channel_b.intctl;
+    uint8_t active = s->pending & ~s->irq_mask;
+    int vector;
+    uint8_t mask;
+    if (s->pending & 0xf0) {
+        mask = 0x10;
+        vector = 0;
+    } else {
+        mask = 0x01;
+        vector = 4;
+    }
+    if (active & (mask << INTVEC_SPECIAL)) {
+        mask <<= INTVEC_SPECIAL;
+        vector += INTVEC_SPECIAL;
+    } else if (active & (mask << INTVEC_RX_AVAIL)) {
+        mask <<= INTVEC_RX_AVAIL;
+        vector += INTVEC_RX_AVAIL;
+    } else if (active & (mask << INTVEC_TX_BUFFER_EMPTY)) {
+        mask <<= INTVEC_TX_BUFFER_EMPTY;
+        vector += INTVEC_TX_BUFFER_EMPTY;
+    } else {
+        mask <<= INTVEC_STATUS_CHANGE;
+        vector += INTVEC_STATUS_CHANGE;
+    }
+    s->pending &= ~mask;
+    mk68564_update(s);
+
+    if (intctl & 0x04) {
+        vector |= s->vectrg & ~7;
+    } else {
+        vector = s->vectrg;
+    }
+    return vector;
+}
 
 static uint8_t mk68564_channel_read(MK68564ChannelState *ch, int offset)
 {
@@ -73,19 +175,18 @@ static uint8_t mk68564_channel_read(MK68564ChannelState *ch, int offset)
     case 6: /* XMTCTL */
         return ch->xmtctl;
     case 7: /* STAT0 */
-        return 0x04; // FIXME: Indicate Rx character available
+        return ch->stat0;
     case 8: /* STAT1 */
         return 0x01;
     case 9: /* DATARG */
-        qemu_log_mask(LOG_UNIMP, "mk68564_read: DATARG\n");
-        return 0;
+        ch->stat0 &= ~STAT0_RX_CHAR_AVAIL;
+        return ch->rxdata;
     case 10: /* TCREG */
         return ch->tcreg;
     case 11: /* BRGCTL */
         return ch->brgctl;
     case 12: /* VECTRG */
-        qemu_log_mask(LOG_UNIMP, "mk68564_read: VECTRG\n");
-        return 0;
+        return ch->sio->vectrg;
     default:
         qemu_log_mask(LOG_GUEST_ERROR,
                       "mk68564_read: Bad offset 0x%x\n", (int)offset);
@@ -96,6 +197,8 @@ static uint8_t mk68564_channel_read(MK68564ChannelState *ch, int offset)
 static uint64_t mk68564_read(void *opaque, hwaddr offset,
                            unsigned size)
 {
+    uint8_t val;
+
     MK68564State *s = (MK68564State *)opaque;
     // Assume we are connected to a 16-bit big-endian bus
     if ((offset & 1) == 0) {
@@ -111,15 +214,29 @@ static uint64_t mk68564_read(void *opaque, hwaddr offset,
         ch = &s->channel_a;
     }
     offset &= 0xf;
-    return mk68564_channel_read(ch, offset);
+    val = mk68564_channel_read(ch, offset & 0xf);
+    trace_mk68564_read(offset, val);
+    return val;
 }
 
 static void mk68564_channel_write(MK68564ChannelState *ch, int offset, uint8_t val)
 {
+    trace_mk68564_write(offset, val);
     switch (offset) {
     case 0: /* CMDREG */
-        if (val != 0) {
-            qemu_log_mask(LOG_UNIMP, "mk68564_write: CMDREG unimplemented 0x%02x\n", val);
+        if (val & 0xc0) {
+            qemu_log_mask(LOG_UNIMP, "mk68564_write: CMDREG unimplemented CRC reset %d\n", val >> 6);
+        }
+        int cmd = (val >> 3) & 7;
+        switch (cmd) {
+        case 0: /* no-op */
+        case 7:
+            break;
+        case 3: /* reset channel */
+            mk68564_reset_channel(ch);
+            break;
+        default:
+            qemu_log_mask(LOG_UNIMP, "mk68564_write: CMDREG unimplemented command %d\n", cmd);
         }
         // TODO: Loopback mode
         ch->cmdreg = val & 1;
@@ -132,10 +249,18 @@ static void mk68564_channel_write(MK68564ChannelState *ch, int offset, uint8_t v
         ch->modectl = val;
         break;
     case 2: /* INTCTL */
-        if (val != 0) {
+        if ((val & 0xe5) != 0) {
             qemu_log_mask(LOG_UNIMP, "mk68564_write: INTCTL unimplemented bits %02x\n", val);
         }
         ch->intctl = val;
+        if ((val & 0x18) == 0) {
+            mk68564_channel_mask_irq(ch, INTVEC_RX_AVAIL);
+            mk68564_channel_mask_irq(ch, INTVEC_SPECIAL);
+        } else if (ch->stat0 & STAT0_RX_CHAR_AVAIL) {
+            mk68564_channel_unmask_irq(ch, INTVEC_RX_AVAIL);
+            mk68564_channel_unmask_irq(ch, INTVEC_SPECIAL);
+        }
+        mk68564_update(ch->sio);
         break;
     case 3: /* SYNC1 */
         qemu_log_mask(LOG_UNIMP, "mk68564_write: SYNC1 0x%02x \n", val);
@@ -158,12 +283,23 @@ static void mk68564_channel_write(MK68564ChannelState *ch, int offset, uint8_t v
         // TODO: TX enable
         ch->xmtctl = val;
         break;
-        break;
         /* 7: STAT0 and 8:STAT1 are readonly */
     case 9: /* DATARG */
-        // TODO: Check if transmitter is enabled
-        qemu_log_mask(LOG_UNIMP, "mk68564_write: DATARG %d\n", val);
-        qemu_chr_fe_write_all(&ch->chr, &val, 1);
+        if ((ch->xmtctl & 1) == 0) {
+            qemu_log_mask(LOG_UNIMP, "mk68564_write: DATARG with TX disabled\n");
+        }
+        // Only for debugging purposes!
+        //qemu_log_mask(LOG_UNIMP, "mk68564_write: DATARG %d %c\n", val, val);
+        trace_mk68564_char_out(val);
+        if (ch->cmdreg) {
+            /* Loopback */
+            mk68564_receive(ch, &val, 0);
+        } else {
+            qemu_chr_fe_write_all(&ch->chr, &val, 1);
+        }
+        if (ch->intctl & 1) {
+            mk68564_channel_raise_irq(ch, INTVEC_TX_BUFFER_EMPTY);
+        }
         break;
     case 10: /* TCREG */
         ch->tcreg = val;
@@ -173,7 +309,7 @@ static void mk68564_channel_write(MK68564ChannelState *ch, int offset, uint8_t v
         ch->brgctl = val;
         break;
     case 12: /* VECTRG */
-        qemu_log_mask(LOG_UNIMP, "mk68564_write: VECTRG 0x%02x \n", val);
+        ch->sio->vectrg = val;
         break;
     default:
         qemu_log_mask(LOG_GUEST_ERROR,
@@ -204,27 +340,29 @@ static void mk68564_write(void *opaque, hwaddr offset,
 
 static int mk68564_can_receive(void *opaque)
 {
-    //MK68564ChannelState *s = (MK68564ChannelState *)opaque;
+    MK68564ChannelState *ch = (MK68564ChannelState *)opaque;
 
-    // FIXME
-    return 0;
+    if (ch->cmdreg) {
+        /* Loopback mode. Stalling probably more useful than discarding it */
+        return 0;
+    }
+    if ((ch->rcvctl & 1) == 0) {
+        return 0;
+    }
+    if ((ch->stat0 & STAT0_RX_CHAR_AVAIL) != 0) {
+        return 0;
+    }
+    // Real hardware has a 3-byte fifo, but we just implement a single entry
+    return 1;
 }
 
 static void mk68564_receive(void *opaque, const uint8_t *buf, int size)
 {
-#if 0
-    MK68564ChannelState *s = (MK68564ChannelState *)opaque;
-    /*
-     * In loopback mode, the RX input signal is internally disconnected
-     * from the entire receiving logics; thus, all inputs are ignored,
-     * and BREAK detection on RX input signal is also not performed.
-     */
-    if (mk68564_loopback_enabled(s)) {
-        return;
-    }
-#endif
+    MK68564ChannelState *ch = (MK68564ChannelState *)opaque;
 
-    qemu_log_mask(LOG_UNIMP, "mk68564: recieve\n");
+    ch->rxdata = *buf;
+    ch->stat0 |= STAT0_RX_CHAR_AVAIL;
+    mk68564_update(ch->sio);
 }
 
 static void mk68564_event(void *opaque, QEMUChrEvent event)
@@ -281,10 +419,11 @@ static void mk68564_init(Object *obj)
 {
     SysBusDevice *sbd = SYS_BUS_DEVICE(obj);
     MK68564State *s = MK68564(obj);
-    static int uid;
 
-    s->channel_a.uid = uid++;
-    s->channel_b.uid = uid++;
+    s->channel_a.sio = s;
+    s->channel_b.sio = s;
+    s->channel_a.id = 0;
+    s->channel_b.id = 1;
     memory_region_init_io(&s->iomem, OBJECT(s), &mk68564_ops, s, "mk68564", 0x1000);
     sysbus_init_mmio(sbd, &s->iomem);
 }
@@ -299,15 +438,18 @@ static void mk68564_realize(DeviceState *dev, Error **errp)
                              mk68564_event, NULL, &s->channel_b, NULL, true);
 }
 
-static void mk68564_reset_channel(MK68564ChannelState *s)
+static void mk68564_reset_channel(MK68564ChannelState *ch)
 {
-    s->txd = 0;
-    s->fifo[0] = 0;
-    s->fifo[1] = 0;
-    s->fifo[2] = 0;
-    s->fifo[2] = 0;
-    s->modectl = 0;
-    s->intctl = 0;
+    ch->cmdreg = 0;
+    ch->modectl = 0;
+    ch->intctl = 0;
+    ch->rcvctl = 0;
+    ch->xmtctl = 0;
+    ch->stat0 = 0x04; // ???
+    ch->rxdata = 0;
+    ch->tcreg = 0;
+    ch->brgctl = 0;
+    mk68564_update(ch->sio);
 }
 static void mk68564_reset(DeviceState *dev)
 {
@@ -315,6 +457,7 @@ static void mk68564_reset(DeviceState *dev)
 
     mk68564_reset_channel(&s->channel_a);
     mk68564_reset_channel(&s->channel_b);
+    s->vectrg = 0x0f;
 }
 
 static void mk68564_class_init(ObjectClass *oc, void *data)

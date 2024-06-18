@@ -18,6 +18,7 @@
 #include "sysemu/sysemu.h"
 #include "hw/m68k/mk68564.h"
 #include "hw/misc/unimp.h"
+#include "trace.h"
 
 // Machine only has 2M installed, but address space is 8M?
 // FIXME: Do we need to setup aliases?
@@ -43,13 +44,19 @@ struct P20MachineState {
 #define TYPE_P20_MACHINE MACHINE_TYPE_NAME("p20")
 OBJECT_DECLARE_SIMPLE_TYPE(P20MachineState, P20_MACHINE)
 
+#define P20_SYS_NIRQ 4
+
 /* P/20 system status and contol */
 struct P20SysState {
     SysBusDevice parent_obj;
 
+    M68kCPU *dma_cpu;
     MemoryRegion iomem;
 
     uint16_t reg16;
+    uint16_t reg18;
+
+    p20_irq dma_irq[P20_SYS_NIRQ];
 };
 
 #define TYPE_P20_SYS "p20-sys"
@@ -60,12 +67,11 @@ static void dma_cpu_reset(void *opaque)
     M68kCPU *cpu = opaque;
     CPUState *cs = CPU(cpu);
     void *p;
+    // Load the reset vectors (pc + sp) from ROM
+    // FIXME: Should honor BOOT.DMA
     hwaddr vec = PROM_ADDR;
 
     cpu_reset(cs);
-    // Load the reset vectors (pc + sp) from ROM
-    // FIXME: a real cpu does this from address zero
-    // so we're probably missing some address remapping logic somewhere
     p = rom_ptr_for_as(cs->as, vec, 8);
     if (p) {
         cpu->env.aregs[7] = ldl_p(p);
@@ -87,6 +93,14 @@ static uint64_t p20_sys_mmio_read(void *opaque, hwaddr addr, unsigned size)
     switch (addr) {
     case 0x16:
         return s->reg16;
+    case 0x18:
+        if (size == 2) {
+            return s->reg18;
+        }
+        return s->reg18 >> 8;
+        // FIXME: bit 7 is cpu id (0=DMA, 1=JOB)
+    case 0x19:
+        return s->reg18 & 0xff;
     default:
     bad:
         val = 0;
@@ -103,6 +117,8 @@ static void p20_sys_mmio_write(void *opaque, hwaddr addr, uint64_t val,
     P20SysState *s = P20_SYS(opaque);
 
     switch (addr) {
+    case 0x00: /* NOP */
+        break;
     case 0x10: /* Set LED */
         //DPRINTF("Set LED 0x%04x", (int)val);
         break;
@@ -113,11 +129,71 @@ static void p20_sys_mmio_write(void *opaque, hwaddr addr, uint64_t val,
         qemu_log_mask(LOG_UNIMP, "p20_sys_mmio_write Reg16 = 0x%04x\n", (uint16_t)val);
         s->reg16 = val;
         break;
+    case 0x20:
+    case 0x40:
+    case 0x60:
+    case 0x80:
+    case 0xa0:
+    case 0xc0:
+    case 0xe0:
+    case 0x100:
+    case 0x120:
+    case 0x140:
+    case 0x160:
+    case 0x180:
+    case 0x1a0:
+    case 0x1c0:
+    case 0x1e0:
+        /* Reset actions */
+        qemu_log_mask(LOG_UNIMP, "p20_sys_mmio_write unimplemented reset @ 0x%"HWADDR_PRIx"\n", addr);
+        break;
     default:
     bad:
         qemu_log_mask(LOG_UNIMP, "p20_sys_mmio_write unimplemented @ 0x%"HWADDR_PRIx" val 0x%04x\n", addr, (uint16_t)val);
         break;
     }
+}
+
+static void p20_sys_dma_irq_handler(void *opaque, int irq, int level)
+{
+    P20SysState *s = P20_SYS(opaque);
+
+    if (level) {
+        level = 5;
+    }
+    if (s->dma_irq[irq].level == level) {
+        return;
+    }
+    s->dma_irq[irq].level = level;
+
+
+    level = 0;
+    for (irq = 0; irq < P20_SYS_NIRQ; irq++) {
+        level = s->dma_irq[irq].level;
+        if (level) {
+            break;
+        }
+    }
+    trace_p20_sys_dma_irq(level);
+    m68k_set_irq_level(s->dma_cpu, level, 0);
+}
+
+static uint8_t p20_sys_irq_ack(void *opaque)
+{
+    P20SysState *s = P20_SYS(opaque);
+    int irq;
+    int level;
+    int vector = 0x0f;
+
+    for (irq = 0; irq < P20_SYS_NIRQ; irq++) {
+        level = s->dma_irq[irq].level;
+        if (level) {
+            vector = s->dma_irq[irq].ack(s->dma_irq[irq].ack_arg);
+            break;
+        }
+    }
+    trace_p20_sys_dma_irq_ack(vector);
+    return vector;
 }
 
 static const MemoryRegionOps p20_sys_mmio_ops = {
@@ -131,18 +207,30 @@ static const MemoryRegionOps p20_sys_mmio_ops = {
 static void p20_sys_reset(DeviceState *dev)
 {
     //P20SysState *s = P20_SYS(dev);
-
 }
 
 static void p20_sys_realize(DeviceState *dev, Error **errp)
 {
     P20SysState *s = P20_SYS(dev);
     SysBusDevice *sbd = SYS_BUS_DEVICE(dev);
+    int i;
 
     memory_region_init_io(&s->iomem, OBJECT(s), &p20_sys_mmio_ops, s,
-                          "p20.sys", 0x20);
+                          "p20.sys", 0x200);
     sysbus_init_mmio(sbd, &s->iomem);
+    qdev_init_gpio_in_named(dev, p20_sys_dma_irq_handler, "dma-irq", 8);
+    for (i = 0; i < P20_SYS_NIRQ; i++) {
+        s->dma_irq[i].irq = qdev_get_gpio_in_named(dev, "dma-irq", i);
+    }
+    s->dma_cpu->env.irq_ack = p20_sys_irq_ack;
+    s->dma_cpu->env.irq_ack_arg = s;
 }
+
+static Property p20_sys_properties[] = {
+    DEFINE_PROP_LINK("dma-cpu", P20SysState, dma_cpu,
+                     TYPE_M68K_CPU, M68kCPU *),
+    DEFINE_PROP_END_OF_LIST(),
+};
 
 static void p20_sys_class_init(ObjectClass *klass, void *data)
 {
@@ -151,7 +239,7 @@ static void p20_sys_class_init(ObjectClass *klass, void *data)
     dc->desc = "P/20 System control/status";
     dc->realize = p20_sys_realize;
     dc->reset = p20_sys_reset;
-    // FIXME: device_class_set_props(dc, next_pc_properties);
+    device_class_set_props(dc, p20_sys_properties);
     // FIXME: dc->vmsd = &next_pc_vmstate;
 }
 
@@ -169,6 +257,7 @@ static void p20_init(MachineState *machine)
     const char *prom_filename = machine->kernel_filename;
     int rom_loaded;
     MemoryRegion *address_space_mem = get_system_memory();
+    P20SysState *sys;
 
     m->dma_cpu = M68K_CPU(cpu_create(machine->cpu_type));
     qemu_register_reset(dma_cpu_reset, m->dma_cpu);
@@ -192,12 +281,16 @@ static void p20_init(MachineState *machine)
         exit(1);
     }
 
-    sysbus_create_simple(TYPE_P20_SYS, 0xe00000, NULL);
+    sys = P20_SYS(qdev_new(TYPE_P20_SYS));
+    object_property_set_link(OBJECT(sys), "dma-cpu",
+                             OBJECT(m->dma_cpu), &error_abort);
+    sysbus_realize_and_unref(SYS_BUS_DEVICE(sys), &error_fatal);
+    sysbus_mmio_map(SYS_BUS_DEVICE(sys), 0, 0xe00000);
 
-    mk68564_create(0xa00000, serial_hd(1), serial_hd(0));
-    mk68564_create(0xa10000, NULL, NULL);
-    mk68564_create(0xa20000, NULL, NULL);
-    mk68564_create(0xa30000, NULL, NULL);
+    mk68564_create(0xa00000, serial_hd(1), serial_hd(0), &sys->dma_irq[3]);
+    mk68564_create(0xa10000, NULL, NULL, &sys->dma_irq[2]);
+    mk68564_create(0xa20000, NULL, NULL, &sys->dma_irq[1]);
+    mk68564_create(0xa30000, NULL, NULL, &sys->dma_irq[0]);
 
     create_unimplemented_device("NOTHING", 0, 0x1000000);
 }

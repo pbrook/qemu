@@ -499,8 +499,12 @@ bool m68k_cpu_exec_interrupt(CPUState *cs, int interrupt_request)
 {
     CPUM68KState *env = cpu_env(cs);
 
+    qemu_log("EXEC_INT %d %d %d\n", (env->sr & SR_I) >> SR_I_SHIFT, env->pending_level, interrupt_request); 
     if (interrupt_request & CPU_INTERRUPT_HARD
         && ((env->sr & SR_I) >> SR_I_SHIFT) < env->pending_level) {
+        if (env->irq_ack) {
+            env->pending_vector = env->irq_ack(env->irq_ack_arg);
+        }
         /*
          * Real hardware gets the interrupt vector via an IACK cycle
          * at this point.  Current emulated hardware doesn't rely on

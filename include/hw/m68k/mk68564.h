@@ -23,17 +23,25 @@
 OBJECT_DECLARE_SIMPLE_TYPE(MK68564State, MK68564)
 
 typedef struct {
-    uint8_t txd;
-    uint8_t fifo[3];
+    int level;
+    qemu_irq irq;
+    uint8_t (*ack)(void *);
+    void *ack_arg;
+} p20_irq;
+
+typedef struct {
+    MK68564State *sio;
     uint8_t cmdreg;
     uint8_t modectl;
     uint8_t intctl;
     uint8_t rcvctl;
     uint8_t xmtctl;
+    uint8_t stat0;
+    uint8_t rxdata;
     uint8_t tcreg;
     uint8_t brgctl;
     CharBackend chr;
-    int uid;
+    int id;
 } MK68564ChannelState;
 
 struct MK68564State {
@@ -42,7 +50,12 @@ struct MK68564State {
     MK68564ChannelState channel_a;
     MK68564ChannelState channel_b;
     MemoryRegion iomem;
+    p20_irq *irq;
+
+    uint8_t vectrg;
+    uint8_t pending;
+    uint8_t irq_mask;
 };
 
-DeviceState *mk68564_create(hwaddr addr, Chardev *chra, Chardev *chrb);
+DeviceState *mk68564_create(hwaddr addr, Chardev *chra, Chardev *chrb, p20_irq *irq);
 #endif
