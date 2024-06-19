@@ -1521,6 +1521,16 @@ DISAS_INSN(divw)
     TCGv destr;
     TCGv ilen;
 
+    /* UGLY HACK: P20 rom loader uses divs.w in a delay loop,
+     * so make it more expensive */
+    if (s->base.num_insns > 1) {
+        int extra = s->base.max_insns - s->base.num_insns;
+        if (extra > 4) {
+            extra = 4;
+        }
+        s->base.num_insns += extra;
+    }
+
     /* divX.w <EA>,Dn    32/16 -> 16r:16q */
 
     sign = (insn & 0x100) != 0;
@@ -6136,13 +6146,23 @@ void m68k_cpu_dump_state(CPUState *cs, FILE *f, int flags)
     CPUM68KState *env = cpu_env(cs);
     int i;
     uint16_t sr;
-    for (i = 0; i < 8; i++) {
-        qemu_fprintf(f, "D%d = %08x   A%d = %08x   "
-                     "F%d = %04x %016"PRIx64"  (%12g)\n",
-                     i, env->dregs[i], i, env->aregs[i],
-                     i, env->fregs[i].l.upper, env->fregs[i].l.lower,
-                     floatx80_to_double(env, env->fregs[i].l.upper,
-                                        env->fregs[i].l.lower));
+    bool have_fpu = m68k_feature(env, M68K_FEATURE_FPU) ||
+                    m68k_feature(env, M68K_FEATURE_CF_FPU);
+    if (have_fpu) {
+        for (i = 0; i < 8; i++) {
+            qemu_fprintf(f, "D%d = %08x   A%d = %08x   "
+                         "F%d = %04x %016"PRIx64"  (%12g)\n",
+                         i, env->dregs[i], i, env->aregs[i],
+                         i, env->fregs[i].l.upper, env->fregs[i].l.lower,
+                         floatx80_to_double(env, env->fregs[i].l.upper,
+                                            env->fregs[i].l.lower));
+        }
+    } else {
+        for (i = 0; i < 4; i++) {
+            qemu_fprintf(f, "D%d = %08x  D%d = %08x   A%d = %08x  A%d = %08x\n",
+                         i, env->dregs[i], i + 4, env->dregs[i + 4],
+                         i, env->aregs[i], i + 4, env->aregs[i + 4]);
+        }
     }
     qemu_fprintf(f, "PC = %08x   ", env->pc);
     sr = env->sr | cpu_m68k_get_ccr(env);
@@ -6152,39 +6172,41 @@ void m68k_cpu_dump_state(CPUState *cs, FILE *f, int flags)
                  (sr & CCF_X) ? 'X' : '-', (sr & CCF_N) ? 'N' : '-',
                  (sr & CCF_Z) ? 'Z' : '-', (sr & CCF_V) ? 'V' : '-',
                  (sr & CCF_C) ? 'C' : '-');
-    qemu_fprintf(f, "FPSR = %08x %c%c%c%c ", env->fpsr,
-                 (env->fpsr & FPSR_CC_A) ? 'A' : '-',
-                 (env->fpsr & FPSR_CC_I) ? 'I' : '-',
-                 (env->fpsr & FPSR_CC_Z) ? 'Z' : '-',
-                 (env->fpsr & FPSR_CC_N) ? 'N' : '-');
-    qemu_fprintf(f, "\n                                "
-                 "FPCR =     %04x ", env->fpcr);
-    switch (env->fpcr & FPCR_PREC_MASK) {
-    case FPCR_PREC_X:
-        qemu_fprintf(f, "X ");
-        break;
-    case FPCR_PREC_S:
-        qemu_fprintf(f, "S ");
-        break;
-    case FPCR_PREC_D:
-        qemu_fprintf(f, "D ");
-        break;
+    if (have_fpu) {
+        qemu_fprintf(f, "FPSR = %08x %c%c%c%c ", env->fpsr,
+                     (env->fpsr & FPSR_CC_A) ? 'A' : '-',
+                     (env->fpsr & FPSR_CC_I) ? 'I' : '-',
+                     (env->fpsr & FPSR_CC_Z) ? 'Z' : '-',
+                     (env->fpsr & FPSR_CC_N) ? 'N' : '-');
+        qemu_fprintf(f, "\n                                "
+                     "FPCR =     %04x ", env->fpcr);
+        switch (env->fpcr & FPCR_PREC_MASK) {
+        case FPCR_PREC_X:
+            qemu_fprintf(f, "X ");
+            break;
+        case FPCR_PREC_S:
+            qemu_fprintf(f, "S ");
+            break;
+        case FPCR_PREC_D:
+            qemu_fprintf(f, "D ");
+            break;
+        }
+        switch (env->fpcr & FPCR_RND_MASK) {
+        case FPCR_RND_N:
+            qemu_fprintf(f, "RN ");
+            break;
+        case FPCR_RND_Z:
+            qemu_fprintf(f, "RZ ");
+            break;
+        case FPCR_RND_M:
+            qemu_fprintf(f, "RM ");
+            break;
+        case FPCR_RND_P:
+            qemu_fprintf(f, "RP ");
+            break;
+        }
+        qemu_fprintf(f, "\n");
     }
-    switch (env->fpcr & FPCR_RND_MASK) {
-    case FPCR_RND_N:
-        qemu_fprintf(f, "RN ");
-        break;
-    case FPCR_RND_Z:
-        qemu_fprintf(f, "RZ ");
-        break;
-    case FPCR_RND_M:
-        qemu_fprintf(f, "RM ");
-        break;
-    case FPCR_RND_P:
-        qemu_fprintf(f, "RP ");
-        break;
-    }
-    qemu_fprintf(f, "\n");
 #ifndef CONFIG_USER_ONLY
     qemu_fprintf(f, "%sA7(MSP) = %08x %sA7(USP) = %08x %sA7(ISP) = %08x\n",
                  env->current_sp == M68K_SSP ? "->" : "  ", env->sp[M68K_SSP],
@@ -6192,12 +6214,15 @@ void m68k_cpu_dump_state(CPUState *cs, FILE *f, int flags)
                  env->current_sp == M68K_ISP ? "->" : "  ", env->sp[M68K_ISP]);
     qemu_fprintf(f, "VBR = 0x%08x\n", env->vbr);
     qemu_fprintf(f, "SFC = %x DFC %x\n", env->sfc, env->dfc);
-    qemu_fprintf(f, "SSW %08x TCR %08x URP %08x SRP %08x\n",
-                 env->mmu.ssw, env->mmu.tcr, env->mmu.urp, env->mmu.srp);
-    qemu_fprintf(f, "DTTR0/1: %08x/%08x ITTR0/1: %08x/%08x\n",
-                 env->mmu.ttr[M68K_DTTR0], env->mmu.ttr[M68K_DTTR1],
-                 env->mmu.ttr[M68K_ITTR0], env->mmu.ttr[M68K_ITTR1]);
-    qemu_fprintf(f, "MMUSR %08x, fault at %08x\n",
-                 env->mmu.mmusr, env->mmu.ar);
+    if (m68k_feature(env, M68K_FEATURE_M68040)
+     || m68k_feature(env, M68K_FEATURE_M68060)) {
+        qemu_fprintf(f, "SSW %08x TCR %08x URP %08x SRP %08x\n",
+                     env->mmu.ssw, env->mmu.tcr, env->mmu.urp, env->mmu.srp);
+        qemu_fprintf(f, "DTTR0/1: %08x/%08x ITTR0/1: %08x/%08x\n",
+                     env->mmu.ttr[M68K_DTTR0], env->mmu.ttr[M68K_DTTR1],
+                     env->mmu.ttr[M68K_ITTR0], env->mmu.ttr[M68K_ITTR1]);
+        qemu_fprintf(f, "MMUSR %08x, fault at %08x\n",
+                     env->mmu.mmusr, env->mmu.ar);
+    }
 #endif /* !CONFIG_USER_ONLY */
 }

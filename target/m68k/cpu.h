@@ -150,6 +150,8 @@ typedef struct CPUArchState {
     int pending_vector;
     int pending_level;
 
+    bool hold_reset;
+
     /* Fields up to this point are cleared by a CPU reset */
     struct {} end_reset_fields;
 

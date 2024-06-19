@@ -36,6 +36,7 @@ struct P20MachineState {
     MachineState parent_obj;
 
     M68kCPU *dma_cpu;
+    M68kCPU *job_cpu;
     MemoryRegion prom;
     MemoryRegion sram;
     MemoryRegion rtc;
@@ -44,32 +45,63 @@ struct P20MachineState {
 #define TYPE_P20_MACHINE MACHINE_TYPE_NAME("p20")
 OBJECT_DECLARE_SIMPLE_TYPE(P20MachineState, P20_MACHINE)
 
-#define P20_SYS_NIRQ 4
+#define P20_SYS_UART_IRQ_MAX 4
+
+#define P20_JOB_IPI 0
+#define P20_DMA_IPI 4
+
+#define P20_SYS_SCSI    0x0e
+#define P20_SYS_MISC    0x16
+#define P20_SYS_CPUC    0x18
+
+#define MISC_NBOOT_DMA  0x8000
+#define MISC_NBOOT_JOB  0x4000
+#define MISC_DIS_MAP    0x0100
+#define MISC_SPARE      0x0080
+#define MISC_DIAG_UART  0x0040
+#define MISC_HOLDMBUS   0x0020
+#define MISC_NRESMB     0x0010
+#define MISC_TODO       0x3e0f // not yet implemented
+
+#define CPUC_KILL_DMA   0x01
+#define CPUC_NKILL_JOB  0x02
+#define CPUC_INT_DMA    0x04
+#define CPUC_INT_JOB    0x08
+#define CPUC_JKPD       0x40
+#define CPUC_CUR_IS_JOB 0x80
 
 /* P/20 system status and contol */
 struct P20SysState {
     SysBusDevice parent_obj;
 
     M68kCPU *dma_cpu;
+    M68kCPU *job_cpu;
     MemoryRegion iomem;
 
-    uint16_t reg16;
-    uint16_t reg18;
+    uint16_t scsi;
+    uint16_t misc;
+    uint16_t cpuc;
 
-    p20_irq dma_irq[P20_SYS_NIRQ];
+    p20_irq uart_irq[P20_SYS_UART_IRQ_MAX];
 };
 
 #define TYPE_P20_SYS "p20-sys"
 OBJECT_DECLARE_SIMPLE_TYPE(P20SysState, P20_SYS)
 
-static void dma_cpu_reset(void *opaque)
+static int get_current_cpuid(void)
 {
-    M68kCPU *cpu = opaque;
+    if (!current_cpu) {
+        return -1;
+    }
+
+    return current_cpu->cpu_index;
+}
+
+static void p20_reset_cpu(M68kCPU *cpu, bool a23)
+{
     CPUState *cs = CPU(cpu);
+    hwaddr vec = a23 ? PROM_ADDR : 0;
     void *p;
-    // Load the reset vectors (pc + sp) from ROM
-    // FIXME: Should honor BOOT.DMA
-    hwaddr vec = PROM_ADDR;
 
     cpu_reset(cs);
     p = rom_ptr_for_as(cs->as, vec, 8);
@@ -82,31 +114,127 @@ static void dma_cpu_reset(void *opaque)
     }
 }
 
+static void p20_halt_cpu(M68kCPU *cpu)
+{
+    CPUState *cs = CPU(cpu);
+
+    cpu_reset(cs);
+    cs->halted = true;
+    cpu->env.hold_reset = true;
+}
+
+static void p20_sys_irq_update_job(P20SysState *s)
+{
+    int level = 0;
+
+    if (s->cpuc & CPUC_INT_JOB) {
+        level = 4;
+    }
+    trace_p20_sys_irq_job(level);
+    m68k_set_irq_level(s->job_cpu, level, 0);
+}
+
+static uint8_t p20_sys_irq_ack_job(void *opaque)
+{
+    P20SysState *s = P20_SYS(opaque);
+    int vector;
+
+    if (s->cpuc & CPUC_INT_JOB) {
+        vector = 0xc1;
+        //s->cpuc &= ~CPUC_INT_JOB;
+        //p20_sys_irq_update_job(s);
+    } else {
+        vector = 0x0f;
+    }
+    trace_p20_sys_irq_job_ack(vector);
+    return vector;
+}
+
+static void p20_sys_irq_update_dma(P20SysState *s)
+{
+    int level = 0;
+    int n;
+
+    for (n = 0; n < P20_SYS_UART_IRQ_MAX; n++) {
+        if (s->uart_irq[n].level) {
+            level = 5;
+            break;
+        }
+    }
+    if (s->cpuc & CPUC_INT_DMA) {
+        level = 2;
+    }
+    trace_p20_sys_irq_dma(level);
+    m68k_set_irq_level(s->dma_cpu, level, 0);
+}
+
+static uint8_t p20_sys_irq_ack_dma(void *opaque)
+{
+    P20SysState *s = P20_SYS(opaque);
+    p20_irq *irq;
+    int n;
+    int vector = -1;
+
+    for (n = 0; n < P20_SYS_UART_IRQ_MAX; n++) {
+        irq = &s->uart_irq[n];
+        if (irq->level) {
+            vector = irq->ack(irq->ack_arg);
+            break;
+        }
+    }
+    if (vector < 0 && s->cpuc & CPUC_INT_DMA) {
+        vector = 0xc2;
+    }
+    if (vector < 0) {
+        vector = 0x0f;
+    }
+    trace_p20_sys_irq_dma_ack(vector);
+    return vector;
+}
+
+static void p20_sys_uart_irq_handler(void *opaque, int irq, int level)
+{
+    P20SysState *s = P20_SYS(opaque);
+
+    if (s->uart_irq[irq].level == level) {
+        return;
+    }
+    s->uart_irq[irq].level = level;
+    p20_sys_irq_update_dma(s);
+}
+
 static uint64_t p20_sys_mmio_read(void *opaque, hwaddr addr, unsigned size)
 {
     P20SysState *s = P20_SYS(opaque);
-    uint64_t val;
+    uint16_t val;
 
-    if (size != 2) {
-        goto bad;
-    }
-    switch (addr) {
-    case 0x16:
-        return s->reg16;
-    case 0x18:
-        if (size == 2) {
-            return s->reg18;
+    switch (addr & ~1) {
+    case P20_SYS_SCSI:
+        val = s->scsi;
+        break;
+    case P20_SYS_MISC:
+        val = s->misc;
+        break;
+    case P20_SYS_CPUC:
+        val = s->cpuc;
+        if (get_current_cpuid() == 1) {
+            val |= CPUC_CUR_IS_JOB;
         }
-        return s->reg18 >> 8;
-        // FIXME: bit 7 is cpu id (0=DMA, 1=JOB)
-    case 0x19:
-        return s->reg18 & 0xff;
+        break;
     default:
-    bad:
         val = 0;
         qemu_log_mask(LOG_UNIMP, "p20_sys_mmio_read unimplemented @ 0x%"HWADDR_PRIx"\n", addr);
         break;
     }
+
+    if (size == 1) {
+        if (addr & 1) {
+            val &= 0xff;
+        } else {
+            val >>= 8;
+        }
+    }
+    trace_p20_sys_mmio_read(addr, val);
 
     return val;
 }
@@ -115,26 +243,81 @@ static void p20_sys_mmio_write(void *opaque, hwaddr addr, uint64_t val,
                             unsigned size)
 {
     P20SysState *s = P20_SYS(opaque);
+    uint16_t mask;
 
-    switch (addr) {
+    trace_p20_sys_mmio_write(addr, val);
+
+    if (size == 1) {
+        // Turn a byte write into a r-m-w
+        if (addr != 0x11 && addr != 0x10) {
+            uint16_t orig;
+            orig = p20_sys_mmio_read(opaque, addr & ~1, size);
+            if (addr & 1) {
+                val |= orig & 0xff00;
+            } else {
+                val = (val << 8) | (orig & 0xff);
+            }
+        }
+    }
+    switch (addr & ~1) {
     case 0x00: /* NOP */
         break;
     case 0x10: /* Set LED */
-        //DPRINTF("Set LED 0x%04x", (int)val);
+        trace_p20_sys_led((int)val);
         break;
-    case 0x16:
-        if (size != 2) {
-            goto bad;
+    case P20_SYS_MISC:
+        val &= ~MISC_SPARE;
+        mask = s->misc ^ val;
+        if (mask & MISC_TODO) {
+            qemu_log_mask(LOG_UNIMP,
+                          "p20_sys_mmio_write MISC unimplemented bits 0x%04x\n",
+                          (uint16_t)(mask & MISC_TODO));
         }
-        qemu_log_mask(LOG_UNIMP, "p20_sys_mmio_write Reg16 = 0x%04x\n", (uint16_t)val);
-        s->reg16 = val;
+        s->misc = val;
+        if (mask & (MISC_NBOOT_DMA | MISC_NBOOT_JOB | MISC_DIS_MAP)) {
+            // FIXME: Flush TLB
+        }
+        break;
+    case P20_SYS_CPUC:
+        mask = CPUC_KILL_DMA | CPUC_NKILL_JOB | CPUC_JKPD;
+        mask &= (s->cpuc ^ val);
+        s->cpuc ^= mask;
+        if (mask & CPUC_KILL_DMA) {
+            if (val & CPUC_KILL_DMA) {
+                p20_halt_cpu(s->dma_cpu);
+            } else {
+                p20_reset_cpu(s->dma_cpu, (s->misc & MISC_NBOOT_DMA) == 0);
+            }
+        }
+        if (mask & CPUC_NKILL_JOB) {
+            if (val & CPUC_NKILL_JOB) {
+                p20_reset_cpu(s->job_cpu, (s->misc & MISC_NBOOT_JOB) == 0);
+            } else {
+                p20_halt_cpu(s->job_cpu);
+            }
+        }
+        if (mask & CPUC_JKPD) {
+            qemu_log_mask(LOG_UNIMP, "p20_sys_mmio_write unimplemented CPUC_JKPF\n");
+        }
         break;
     case 0x20:
     case 0x40:
     case 0x60:
+        s->cpuc &= ~CPUC_INT_JOB;
+        p20_sys_irq_update_job(s);
+        break;
     case 0x80:
+        s->cpuc |= CPUC_INT_JOB;
+        p20_sys_irq_update_job(s);
+        break;
     case 0xa0:
+        s->cpuc &= ~CPUC_INT_DMA;
+        p20_sys_irq_update_dma(s);
+        break;
     case 0xc0:
+        s->cpuc |= CPUC_INT_DMA;
+        p20_sys_irq_update_dma(s);
+        break;
     case 0xe0:
     case 0x100:
     case 0x120:
@@ -148,52 +331,9 @@ static void p20_sys_mmio_write(void *opaque, hwaddr addr, uint64_t val,
         qemu_log_mask(LOG_UNIMP, "p20_sys_mmio_write unimplemented reset @ 0x%"HWADDR_PRIx"\n", addr);
         break;
     default:
-    bad:
         qemu_log_mask(LOG_UNIMP, "p20_sys_mmio_write unimplemented @ 0x%"HWADDR_PRIx" val 0x%04x\n", addr, (uint16_t)val);
         break;
     }
-}
-
-static void p20_sys_dma_irq_handler(void *opaque, int irq, int level)
-{
-    P20SysState *s = P20_SYS(opaque);
-
-    if (level) {
-        level = 5;
-    }
-    if (s->dma_irq[irq].level == level) {
-        return;
-    }
-    s->dma_irq[irq].level = level;
-
-
-    level = 0;
-    for (irq = 0; irq < P20_SYS_NIRQ; irq++) {
-        level = s->dma_irq[irq].level;
-        if (level) {
-            break;
-        }
-    }
-    trace_p20_sys_dma_irq(level);
-    m68k_set_irq_level(s->dma_cpu, level, 0);
-}
-
-static uint8_t p20_sys_irq_ack(void *opaque)
-{
-    P20SysState *s = P20_SYS(opaque);
-    int irq;
-    int level;
-    int vector = 0x0f;
-
-    for (irq = 0; irq < P20_SYS_NIRQ; irq++) {
-        level = s->dma_irq[irq].level;
-        if (level) {
-            vector = s->dma_irq[irq].ack(s->dma_irq[irq].ack_arg);
-            break;
-        }
-    }
-    trace_p20_sys_dma_irq_ack(vector);
-    return vector;
 }
 
 static const MemoryRegionOps p20_sys_mmio_ops = {
@@ -206,7 +346,10 @@ static const MemoryRegionOps p20_sys_mmio_ops = {
 
 static void p20_sys_reset(DeviceState *dev)
 {
-    //P20SysState *s = P20_SYS(dev);
+    P20SysState *s = P20_SYS(dev);
+
+    p20_reset_cpu(s->dma_cpu, true);
+    p20_halt_cpu(s->job_cpu);
 }
 
 static void p20_sys_realize(DeviceState *dev, Error **errp)
@@ -218,16 +361,20 @@ static void p20_sys_realize(DeviceState *dev, Error **errp)
     memory_region_init_io(&s->iomem, OBJECT(s), &p20_sys_mmio_ops, s,
                           "p20.sys", 0x200);
     sysbus_init_mmio(sbd, &s->iomem);
-    qdev_init_gpio_in_named(dev, p20_sys_dma_irq_handler, "dma-irq", 8);
-    for (i = 0; i < P20_SYS_NIRQ; i++) {
-        s->dma_irq[i].irq = qdev_get_gpio_in_named(dev, "dma-irq", i);
+    qdev_init_gpio_in_named(dev, p20_sys_uart_irq_handler, "uart-irq", 8);
+    for (i = 0; i < P20_SYS_UART_IRQ_MAX; i++) {
+        s->uart_irq[i].irq = qdev_get_gpio_in_named(dev, "uart-irq", i);
     }
-    s->dma_cpu->env.irq_ack = p20_sys_irq_ack;
+    s->dma_cpu->env.irq_ack = p20_sys_irq_ack_dma;
     s->dma_cpu->env.irq_ack_arg = s;
+    s->job_cpu->env.irq_ack = p20_sys_irq_ack_job;
+    s->job_cpu->env.irq_ack_arg = s;
 }
 
 static Property p20_sys_properties[] = {
     DEFINE_PROP_LINK("dma-cpu", P20SysState, dma_cpu,
+                     TYPE_M68K_CPU, M68kCPU *),
+    DEFINE_PROP_LINK("job-cpu", P20SysState, job_cpu,
                      TYPE_M68K_CPU, M68kCPU *),
     DEFINE_PROP_END_OF_LIST(),
 };
@@ -260,7 +407,7 @@ static void p20_init(MachineState *machine)
     P20SysState *sys;
 
     m->dma_cpu = M68K_CPU(cpu_create(machine->cpu_type));
-    qemu_register_reset(dma_cpu_reset, m->dma_cpu);
+    m->job_cpu = M68K_CPU(cpu_create(machine->cpu_type));
 
     // FIXME: Validate ram_size
     /* Main DRAM at address zero */
@@ -273,7 +420,7 @@ static void p20_init(MachineState *machine)
     memory_region_add_subregion(address_space_mem, RTC_ADDR, &m->rtc);
 
     /* Boot rom.  */
-    memory_region_init_ram(&m->prom, NULL, "prom", PROM_SIZE, &error_fatal);
+    memory_region_init_rom(&m->prom, NULL, "prom", PROM_SIZE, &error_fatal);
     memory_region_add_subregion(address_space_mem, PROM_ADDR, &m->prom);
     rom_loaded = load_image_targphys(prom_filename, PROM_ADDR, PROM_SIZE);
     if (rom_loaded < 0) {
@@ -284,13 +431,15 @@ static void p20_init(MachineState *machine)
     sys = P20_SYS(qdev_new(TYPE_P20_SYS));
     object_property_set_link(OBJECT(sys), "dma-cpu",
                              OBJECT(m->dma_cpu), &error_abort);
+    object_property_set_link(OBJECT(sys), "job-cpu",
+                             OBJECT(m->job_cpu), &error_abort);
     sysbus_realize_and_unref(SYS_BUS_DEVICE(sys), &error_fatal);
     sysbus_mmio_map(SYS_BUS_DEVICE(sys), 0, 0xe00000);
 
-    mk68564_create(0xa00000, serial_hd(1), serial_hd(0), &sys->dma_irq[3]);
-    mk68564_create(0xa10000, NULL, NULL, &sys->dma_irq[2]);
-    mk68564_create(0xa20000, NULL, NULL, &sys->dma_irq[1]);
-    mk68564_create(0xa30000, NULL, NULL, &sys->dma_irq[0]);
+    mk68564_create(0xa00000, serial_hd(1), serial_hd(0), &sys->uart_irq[3]);
+    mk68564_create(0xa10000, NULL, NULL, &sys->uart_irq[2]);
+    mk68564_create(0xa20000, NULL, NULL, &sys->uart_irq[1]);
+    mk68564_create(0xa30000, NULL, NULL, &sys->uart_irq[0]);
 
     create_unimplemented_device("NOTHING", 0, 0x1000000);
 }

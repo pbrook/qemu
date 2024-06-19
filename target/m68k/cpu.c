@@ -53,7 +53,7 @@ static void m68k_restore_state_to_opc(CPUState *cs,
 
 static bool m68k_cpu_has_work(CPUState *cs)
 {
-    return cs->interrupt_request & CPU_INTERRUPT_HARD;
+    return (cs->interrupt_request & CPU_INTERRUPT_HARD) && !cpu_env(cs)->hold_reset;
 }
 
 static int m68k_cpu_mmu_index(CPUState *cs, bool ifetch)
