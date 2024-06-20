@@ -157,8 +157,14 @@ typedef struct CPUArchState {
 
     /* Fields from here on are preserved across CPU reset. */
     uint64_t features;
+
     uint8_t (*irq_ack)(void*);
     void *irq_ack_arg;
+    /* External mmu support */
+    int (*emmu_get_pa)(void *opaque, struct CPUArchState *env, hwaddr *physical,
+                                int *prot, target_ulong address,
+                                int access_type);
+    void *emmu_arg;
 } CPUM68KState;
 
 /*

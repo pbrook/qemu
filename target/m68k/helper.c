@@ -962,15 +962,6 @@ bool m68k_cpu_tlb_fill(CPUState *cs, vaddr address, int size,
     int ret;
     target_ulong page_size;
 
-    if ((env->mmu.tcr & M68K_TCR_ENABLED) == 0) {
-        /* MMU disabled */
-        tlb_set_page(cs, address & TARGET_PAGE_MASK,
-                     address & TARGET_PAGE_MASK,
-                     PAGE_READ | PAGE_WRITE | PAGE_EXEC,
-                     mmu_idx, TARGET_PAGE_SIZE);
-        return true;
-    }
-
     if (qemu_access_type == MMU_INST_FETCH) {
         access_type = ACCESS_CODE;
     } else {
@@ -981,6 +972,28 @@ bool m68k_cpu_tlb_fill(CPUState *cs, vaddr address, int size,
     }
     if (mmu_idx != MMU_USER_IDX) {
         access_type |= ACCESS_SUPER;
+    }
+
+    if (env->emmu_get_pa) {
+        ret = env->emmu_get_pa(env->emmu_arg, env, &physical, &prot,
+                                        address, access_type);
+        if (likely(ret == 0)) {
+            tlb_set_page(cs, address & TARGET_PAGE_MASK,
+                         physical & TARGET_PAGE_MASK, prot,
+                         mmu_idx, TARGET_PAGE_SIZE);
+            return true;
+        }
+        abort();
+        return false;
+    }
+
+    if ((env->mmu.tcr & M68K_TCR_ENABLED) == 0) {
+        /* MMU disabled */
+        tlb_set_page(cs, address & TARGET_PAGE_MASK,
+                     address & TARGET_PAGE_MASK,
+                     PAGE_READ | PAGE_WRITE | PAGE_EXEC,
+                     mmu_idx, TARGET_PAGE_SIZE);
+        return true;
     }
 
     ret = get_physical_address(env, &physical, &prot,

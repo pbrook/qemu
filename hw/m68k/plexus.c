@@ -19,16 +19,34 @@
 #include "hw/m68k/mk68564.h"
 #include "hw/misc/unimp.h"
 #include "trace.h"
+#include "exec/exec-all.h"
 
 // Machine only has 2M installed, but address space is 8M?
-// FIXME: Do we need to setup aliases?
 #define MAX_DRAM_SIZE   0x800000
+
+#define ADDR_A23        (1 << 23)
 
 #define PROM_ADDR       0x800000
 #define PROM_SIZE        0x10000
 
 #define SRAM_ADDR       0xc00000
 #define SRAM_SIZE         0x4000
+
+#define MAPPER_PAGE_BITS    12
+#define MAPPER_VBITS        (23 - MAPPER_PAGE_BITS)
+#define MAPPER_RAM_ADDR     0x900000
+#define MAPPER_RAM_SIZE     (8 << MAPPER_VBITS)
+
+#define MAP_E1_R_MASK       0x8000
+#define MAP_E1_W_MASK       0x4000
+#define MAP_E1_X_MASK       0x2000
+// Docs say we have 13 physical address bits, but we currently only implement
+// 11 to avoid conflict with the directly attached bus devices.
+#define MAP_E1_PHYS_MASK    0x07ff
+#define MAP_E0_REF_MASK     0x0001
+#define MAP_E0_DIRTY_MASK   0x0002
+#define MAP_E0_USER_SHIFT   24
+
 
 #define RTC_ADDR        0xd00000
 
@@ -77,12 +95,14 @@ struct P20SysState {
     M68kCPU *dma_cpu;
     M68kCPU *job_cpu;
     MemoryRegion iomem;
+    MemoryRegion mapper;
 
     uint16_t scsi;
     uint16_t misc;
     uint16_t cpuc;
 
     p20_irq uart_irq[P20_SYS_UART_IRQ_MAX];
+    uint16_t map[4 << MAPPER_VBITS];
 };
 
 #define TYPE_P20_SYS "p20-sys"
@@ -100,7 +120,7 @@ static int get_current_cpuid(void)
 static void p20_reset_cpu(M68kCPU *cpu, bool a23)
 {
     CPUState *cs = CPU(cpu);
-    hwaddr vec = a23 ? PROM_ADDR : 0;
+    hwaddr vec = a23 ? ADDR_A23 : 0;
     void *p;
 
     cpu_reset(cs);
@@ -121,6 +141,141 @@ static void p20_halt_cpu(M68kCPU *cpu)
     cpu_reset(cs);
     cs->halted = true;
     cpu->env.hold_reset = true;
+}
+
+static int p20_mapper_get_pa(void *opaque, CPUM68KState *env, hwaddr *physical,
+                                int *prot_p, target_ulong address,
+                                int access_type)
+{
+    P20SysState *s = P20_SYS(opaque);
+    uint16_t entry0;
+    uint16_t entry1;
+    int prot = 0;
+
+    trace_p20_mapper_get_phys_addr(address, access_type);
+    if (get_current_cpuid() == 1) {
+        if ((s->misc & MISC_NBOOT_JOB) == 0) {
+            address |= ADDR_A23;
+        }
+    } else {
+        if ((s->misc & MISC_NBOOT_DMA) == 0) {
+            address |= ADDR_A23;
+        }
+    }
+    if ((s->misc & MISC_DIS_MAP) || (address >= ADDR_A23)) {
+        if ((access_type & ACCESS_SUPER) == 0) {
+            trace_p20_mapper_fail(0);
+            return -1;
+        }
+        *physical = address;
+        *prot_p = PROT_READ | PROT_WRITE | PROT_EXEC;
+        return 0;
+    }
+    address >>= (MAPPER_PAGE_BITS - 1) & ~1;
+    if (access_type & ACCESS_SUPER) {
+        address |= 2 << MAPPER_VBITS;
+    }
+    entry0 = s->map[address];
+    entry1 = s->map[address + 1];
+    trace_p20_mapper_entry(entry0, entry1);
+    entry0 |= MAP_E0_REF_MASK;
+    if ((entry1 & MAP_E1_R_MASK) == 0) {
+        prot |= PROT_READ;
+    } else if ((access_type & (ACCESS_DATA | ACCESS_STORE | ACCESS_CODE)) == ACCESS_DATA) {
+        // Should write/exec also require read access?
+        trace_p20_mapper_fail(1);
+        return -1;
+    }
+    if ((entry1 & MAP_E1_W_MASK) == 0) {
+        if (access_type & ACCESS_STORE) {
+            prot |= PROT_WRITE;
+            entry0 |= MAP_E0_DIRTY_MASK;
+        }
+    } else if (access_type & ACCESS_STORE) {
+        trace_p20_mapper_fail(2);
+        return -1;
+    }
+    if ((entry1 & MAP_E1_X_MASK) == 0) {
+        prot |= PROT_EXEC;
+    } else if (access_type & ACCESS_CODE) {
+        trace_p20_mapper_fail(3);
+        return -1;
+    }
+    entry0 |= MAP_E0_DIRTY_MASK;
+    if ((access_type & ACCESS_DEBUG) == 0) {
+        s->map[address] = entry0;
+    }
+    // FIXME: User access checks
+    *physical = (entry1 & MAP_E1_PHYS_MASK) << MAPPER_PAGE_BITS;
+    *prot_p = prot;
+    return 0;
+}
+
+static uint64_t p20_mapper_read(void *opaque, hwaddr addr, unsigned size)
+{
+    P20SysState *s = P20_SYS(opaque);
+    uint32_t val;
+
+    if (size == 2) {
+        val = s->map[addr >> 1];
+    } else if (size == 4) {
+        val = p20_mapper_read(opaque, addr, 2);
+        val = (val << 16) | p20_mapper_read(opaque, addr + 2, 2);
+        return val;
+    } else {
+        val = s->map[addr >> 1];
+        if (addr & 1) {
+            val &= 0xff;
+        } else {
+            val >>= 8;
+        }
+    }
+    trace_p20_mapper_read(addr, val);
+    return val;
+}
+
+static void p20_mapper_write(void *opaque, hwaddr addr, uint64_t val,
+                            unsigned size)
+{
+    P20SysState *s = P20_SYS(opaque);
+    int idxmap;
+    uint16_t e0;
+    uint16_t e1;
+
+    if (size == 4) {
+        trace_p20_mapper_write32(addr, val);
+        addr >>= 1;
+        e0 = s->map[addr];
+        e1 = s->map[addr + 1];
+        if (val == ((e0 << 16) | e1)) {
+            return;
+        }
+        s->map[addr] = val >> 16;
+        s->map[addr + 1] = val;
+    } else {
+        if (size == 1) {
+            abort();// FIXME
+        }
+        trace_p20_mapper_write(addr, val);
+        addr >>= 1;
+        if (s->map[addr] == val) {
+            return;
+        }
+        s->map[addr] = val;
+    }
+    if (s->misc & MISC_DIS_MAP) {
+        return;
+    }
+    addr >>= 1;
+    if (addr & (1 << MAPPER_VBITS)) {
+        idxmap = 1 << MMU_KERNEL_IDX;
+        addr &= (1<< MAPPER_VBITS) - 1;
+    } else {
+        idxmap = 1 << MMU_USER_IDX;
+    }
+    tlb_flush_page_by_mmuidx_all_cpus_synced(current_cpu,
+                                             addr << MAPPER_PAGE_BITS,
+                                             idxmap);
 }
 
 static void p20_sys_irq_update_job(P20SysState *s)
@@ -275,7 +430,7 @@ static void p20_sys_mmio_write(void *opaque, hwaddr addr, uint64_t val,
         }
         s->misc = val;
         if (mask & (MISC_NBOOT_DMA | MISC_NBOOT_JOB | MISC_DIS_MAP)) {
-            // FIXME: Flush TLB
+            tlb_flush_all_cpus_synced(current_cpu);
         }
         break;
     case P20_SYS_CPUC:
@@ -336,11 +491,17 @@ static void p20_sys_mmio_write(void *opaque, hwaddr addr, uint64_t val,
     }
 }
 
+static const MemoryRegionOps p20_mapper_ops = {
+    .read = p20_mapper_read,
+    .write = p20_mapper_write,
+    .impl.max_access_size = 4,
+    .endianness = DEVICE_BIG_ENDIAN,
+};
+
 static const MemoryRegionOps p20_sys_mmio_ops = {
     .read = p20_sys_mmio_read,
     .write = p20_sys_mmio_write,
-    .valid.min_access_size = 1,
-    .valid.max_access_size = 2,
+    .impl.max_access_size = 2,
     .endianness = DEVICE_BIG_ENDIAN,
 };
 
@@ -358,6 +519,9 @@ static void p20_sys_realize(DeviceState *dev, Error **errp)
     SysBusDevice *sbd = SYS_BUS_DEVICE(dev);
     int i;
 
+    memory_region_init_io(&s->mapper, OBJECT(s), &p20_mapper_ops, s,
+                          "p20.mapper", MAPPER_RAM_SIZE);
+    sysbus_init_mmio(sbd, &s->mapper);
     memory_region_init_io(&s->iomem, OBJECT(s), &p20_sys_mmio_ops, s,
                           "p20.sys", 0x200);
     sysbus_init_mmio(sbd, &s->iomem);
@@ -367,8 +531,12 @@ static void p20_sys_realize(DeviceState *dev, Error **errp)
     }
     s->dma_cpu->env.irq_ack = p20_sys_irq_ack_dma;
     s->dma_cpu->env.irq_ack_arg = s;
+    s->dma_cpu->env.emmu_get_pa = p20_mapper_get_pa;
+    s->dma_cpu->env.emmu_arg = s;
     s->job_cpu->env.irq_ack = p20_sys_irq_ack_job;
     s->job_cpu->env.irq_ack_arg = s;
+    s->job_cpu->env.emmu_get_pa = p20_mapper_get_pa;
+    s->job_cpu->env.emmu_arg = s;
 }
 
 static Property p20_sys_properties[] = {
@@ -434,7 +602,8 @@ static void p20_init(MachineState *machine)
     object_property_set_link(OBJECT(sys), "job-cpu",
                              OBJECT(m->job_cpu), &error_abort);
     sysbus_realize_and_unref(SYS_BUS_DEVICE(sys), &error_fatal);
-    sysbus_mmio_map(SYS_BUS_DEVICE(sys), 0, 0xe00000);
+    sysbus_mmio_map(SYS_BUS_DEVICE(sys), 0, MAPPER_RAM_ADDR);
+    sysbus_mmio_map(SYS_BUS_DEVICE(sys), 1, 0xe00000);
 
     mk68564_create(0xa00000, serial_hd(1), serial_hd(0), &sys->uart_irq[3]);
     mk68564_create(0xa10000, NULL, NULL, &sys->uart_irq[2]);
