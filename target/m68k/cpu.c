@@ -46,6 +46,8 @@ static void m68k_restore_state_to_opc(CPUState *cs,
     int cc_op = data[1];
 
     cpu->env.pc = data[0];
+    cpu->env.mmu.insn_length = (cc_op >> 3) & ~1;
+    cc_op &= 0xf;
     if (cc_op != CC_OP_DYNAMIC) {
         cpu->env.cc_op = cc_op;
     }

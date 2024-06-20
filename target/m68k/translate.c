@@ -120,6 +120,7 @@ typedef struct DisasContext {
     int writeback_mask;
     TCGv writeback[8];
     bool ss_active;
+    TCGOp *insn_start;
 } DisasContext;
 
 static TCGv get_areg(DisasContext *s, unsigned regno)
@@ -6042,6 +6043,7 @@ static void m68k_tr_insn_start(DisasContextBase *dcbase, CPUState *cpu)
 {
     DisasContext *dc = container_of(dcbase, DisasContext, base);
     tcg_gen_insn_start(dc->base.pc_next, dc->cc_op);
+    dc->insn_start = tcg_last_op();
 }
 
 static void m68k_tr_translate_insn(DisasContextBase *dcbase, CPUState *cpu)
@@ -6049,10 +6051,14 @@ static void m68k_tr_translate_insn(DisasContextBase *dcbase, CPUState *cpu)
     DisasContext *dc = container_of(dcbase, DisasContext, base);
     CPUM68KState *env = cpu_env(cpu);
     uint16_t insn = read_im16(env, dc);
+    uint32_t insn_param = dc->cc_op;
 
     opcode_table[insn](env, dc, insn);
     do_writebacks(dc);
 
+    insn_param |= (dc->pc - dc->base.pc_next) << 3;
+    /* Patch in the op length */
+    tcg_set_insn_start_param(dc->insn_start, 1, insn_param);
     dc->pc_prev = dc->base.pc_next;
     dc->base.pc_next = dc->pc;
 

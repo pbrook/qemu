@@ -137,6 +137,8 @@ typedef struct CPUArchState {
         bool fault;
         uint32_t ttr[4];
         uint32_t mmusr;
+        /* 60010 */
+        uint16_t insn_length;
     } mmu;
 
     /* Control registers.  */
@@ -161,9 +163,9 @@ typedef struct CPUArchState {
     uint8_t (*irq_ack)(void*);
     void *irq_ack_arg;
     /* External mmu support */
-    int (*emmu_get_pa)(void *opaque, struct CPUArchState *env, hwaddr *physical,
-                                int *prot, target_ulong address,
-                                int access_type);
+    int (*emmu_get_phys_addr)(void *opaque, struct CPUArchState *env, hwaddr *physical,
+                              int *prot, target_ulong address,
+                              int access_type, target_ulong *page_size);
     void *emmu_arg;
 } CPUM68KState;
 
@@ -259,6 +261,15 @@ typedef enum {
 #define M68K_SSP    0
 #define M68K_USP    1
 #define M68K_ISP    2
+
+/* bits for 68010 special status word */
+#define M68K_010_SSW_RW 0x0100 /* same as M68K_RW_040 */
+#define M68K_010_SSW_BY 0x0200
+#define M68K_010_SSW_HB 0x0400
+#define M68K_010_SSW_RM 0x0800
+#define M68K_010_SSW_DF 0x1000
+#define M68K_010_SSW_IF 0x2000
+#define M68K_010_SSW_RR 0x8000
 
 /* bits for 68040 special status word */
 #define M68K_CP_040  0x8000

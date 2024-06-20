@@ -738,6 +738,10 @@ static int get_physical_address(CPUM68KState *env, hwaddr *physical,
     int i;
     MemTxResult txres;
 
+    if (env->emmu_get_phys_addr) {
+        return env->emmu_get_phys_addr(env->emmu_arg, env, physical, prot,
+                               address, access_type, page_size);
+    }
     /* Transparent Translation (physical = logical) */
     for (i = 0; i < M68K_MAX_TTR; i++) {
         if (check_TTR(env->mmu.TTR(access_type, i),
@@ -962,6 +966,15 @@ bool m68k_cpu_tlb_fill(CPUState *cs, vaddr address, int size,
     int ret;
     target_ulong page_size;
 
+    if ((env->mmu.tcr & M68K_TCR_ENABLED) == 0) {
+        /* MMU disabled */
+        tlb_set_page(cs, address & TARGET_PAGE_MASK,
+                     address & TARGET_PAGE_MASK,
+                     PAGE_READ | PAGE_WRITE | PAGE_EXEC,
+                     mmu_idx, TARGET_PAGE_SIZE);
+        return true;
+    }
+
     if (qemu_access_type == MMU_INST_FETCH) {
         access_type = ACCESS_CODE;
     } else {
@@ -972,28 +985,6 @@ bool m68k_cpu_tlb_fill(CPUState *cs, vaddr address, int size,
     }
     if (mmu_idx != MMU_USER_IDX) {
         access_type |= ACCESS_SUPER;
-    }
-
-    if (env->emmu_get_pa) {
-        ret = env->emmu_get_pa(env->emmu_arg, env, &physical, &prot,
-                                        address, access_type);
-        if (likely(ret == 0)) {
-            tlb_set_page(cs, address & TARGET_PAGE_MASK,
-                         physical & TARGET_PAGE_MASK, prot,
-                         mmu_idx, TARGET_PAGE_SIZE);
-            return true;
-        }
-        abort();
-        return false;
-    }
-
-    if ((env->mmu.tcr & M68K_TCR_ENABLED) == 0) {
-        /* MMU disabled */
-        tlb_set_page(cs, address & TARGET_PAGE_MASK,
-                     address & TARGET_PAGE_MASK,
-                     PAGE_READ | PAGE_WRITE | PAGE_EXEC,
-                     mmu_idx, TARGET_PAGE_SIZE);
-        return true;
     }
 
     ret = get_physical_address(env, &physical, &prot,
@@ -1009,17 +1000,31 @@ bool m68k_cpu_tlb_fill(CPUState *cs, vaddr address, int size,
     }
 
     /* page fault */
-    env->mmu.ssw = M68K_ATC_040;
-    switch (size) {
-    case 1:
-        env->mmu.ssw |= M68K_BA_SIZE_BYTE;
-        break;
-    case 2:
-        env->mmu.ssw |= M68K_BA_SIZE_WORD;
-        break;
-    case 4:
-        env->mmu.ssw |= M68K_BA_SIZE_LONG;
-        break;
+    if (m68k_feature(env, M68K_FEATURE_M68010)) {
+        env->mmu.ssw = 0;
+        if (size == 1) {
+            env->mmu.ssw |= M68K_010_SSW_BY;
+        }
+        if ((access_type & ACCESS_STORE) == 0) {
+            if (access_type & ACCESS_CODE) {
+                env->mmu.ssw |= M68K_010_SSW_IF;
+            } else {
+                env->mmu.ssw |= M68K_010_SSW_DF;
+            }
+        }
+    } else {
+        env->mmu.ssw = M68K_ATC_040;
+        switch (size) {
+        case 1:
+            env->mmu.ssw |= M68K_BA_SIZE_BYTE;
+            break;
+        case 2:
+            env->mmu.ssw |= M68K_BA_SIZE_WORD;
+            break;
+        case 4:
+            env->mmu.ssw |= M68K_BA_SIZE_LONG;
+            break;
+        }
     }
     if (access_type & ACCESS_SUPER) {
         env->mmu.ssw |= M68K_TM_040_SUPER;

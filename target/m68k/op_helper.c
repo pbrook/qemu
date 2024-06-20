@@ -45,6 +45,7 @@ static void m68k_rte(CPUM68KState *env)
     uint32_t sp;
     uint16_t fmt;
     uint16_t sr;
+    uint16_t ssw;
 
     sp = env->aregs[7];
 throwaway:
@@ -72,6 +73,18 @@ throwaway:
             break;
         case 7:
             sp += 52;
+            break;
+        case 8:
+            ssw = cpu_lduw_mmuidx_ra(env, sp, MMU_KERNEL_IDX, 0);
+            if (ssw & M68K_010_SSW_RR) {
+                //cpu_abort(env_cpu(env), "rte resume");
+                // FIXME: This doesn't work? It just skips the insn
+                uint16_t insn_size = cpu_lduw_mmuidx_ra(env, sp + 20, MMU_KERNEL_IDX, 0);
+                env->pc += insn_size;
+                qemu_log("RTE resume :-(\n");
+            }
+            qemu_log("RTE: %06x\n", env->pc);
+            sp += 50;
             break;
         }
     }
@@ -250,6 +263,65 @@ static inline void do_stack_frame(CPUM68KState *env, uint32_t *sp,
         /*  all except 68000 */
         CPUState *cs = env_cpu(env);
         switch (format) {
+        case 8:
+            *sp -= 50;
+            /* Special Status Word */
+            cpu_stw_mmuidx_ra(env, *sp, env->mmu.ssw, MMU_KERNEL_IDX, 0);
+            /* Fault Address */
+            cpu_stl_mmuidx_ra(env, *sp + 2, env->mmu.ar, MMU_KERNEL_IDX, 0);
+            /* Data buffers not implemented (see m68k_rte) */
+            /* instruction length */
+            cpu_stw_mmuidx_ra(env, *sp + 20, env->mmu.insn_length, MMU_KERNEL_IDX, 0);
+            qemu_log("ACCESS: retaddr %06x pc %06x ssw %04x len %d\n", retaddr, env->pc, env->mmu.ssw, env->mmu.insn_length);
+            break;
+        case 7:
+            /* push data 3 */
+            *sp -= 4;
+            cpu_stl_mmuidx_ra(env, *sp, 0, MMU_KERNEL_IDX, 0);
+            /* push data 2 */
+            *sp -= 4;
+            cpu_stl_mmuidx_ra(env, *sp, 0, MMU_KERNEL_IDX, 0);
+            /* push data 1 */
+            *sp -= 4;
+            cpu_stl_mmuidx_ra(env, *sp, 0, MMU_KERNEL_IDX, 0);
+            /* write back 1 / push data 0 */
+            *sp -= 4;
+            cpu_stl_mmuidx_ra(env, *sp, 0, MMU_KERNEL_IDX, 0);
+            /* write back 1 address */
+            *sp -= 4;
+            cpu_stl_mmuidx_ra(env, *sp, 0, MMU_KERNEL_IDX, 0);
+            /* write back 2 data */
+            *sp -= 4;
+            cpu_stl_mmuidx_ra(env, *sp, 0, MMU_KERNEL_IDX, 0);
+            /* write back 2 address */
+            *sp -= 4;
+            cpu_stl_mmuidx_ra(env, *sp, 0, MMU_KERNEL_IDX, 0);
+            /* write back 3 data */
+            *sp -= 4;
+            cpu_stl_mmuidx_ra(env, *sp, 0, MMU_KERNEL_IDX, 0);
+            /* write back 3 address */
+            *sp -= 4;
+            cpu_stl_mmuidx_ra(env, *sp, env->mmu.ar, MMU_KERNEL_IDX, 0);
+            /* fault address */
+            *sp -= 4;
+            cpu_stl_mmuidx_ra(env, *sp, env->mmu.ar, MMU_KERNEL_IDX, 0);
+            /* write back 1 status */
+            *sp -= 2;
+            cpu_stw_mmuidx_ra(env, *sp, 0, MMU_KERNEL_IDX, 0);
+            /* write back 2 status */
+            *sp -= 2;
+            cpu_stw_mmuidx_ra(env, *sp, 0, MMU_KERNEL_IDX, 0);
+            /* write back 3 status */
+            *sp -= 2;
+            cpu_stw_mmuidx_ra(env, *sp, 0, MMU_KERNEL_IDX, 0);
+            /* special status word */
+            *sp -= 2;
+            cpu_stw_mmuidx_ra(env, *sp, env->mmu.ssw, MMU_KERNEL_IDX, 0);
+            /* effective address */
+            *sp -= 4;
+            cpu_stl_mmuidx_ra(env, *sp, env->mmu.ar, MMU_KERNEL_IDX, 0);
+
+            break;
         case 4:
             *sp -= 4;
             cpu_stl_mmuidx_ra(env, *sp, env->pc, MMU_KERNEL_IDX, 0);
@@ -325,53 +397,11 @@ static void m68k_interrupt_all(CPUM68KState *env, int is_hw)
             cpu_abort(cs, "DOUBLE MMU FAULT\n");
         }
         env->mmu.fault = true;
-        /* push data 3 */
-        sp -= 4;
-        cpu_stl_mmuidx_ra(env, sp, 0, MMU_KERNEL_IDX, 0);
-        /* push data 2 */
-        sp -= 4;
-        cpu_stl_mmuidx_ra(env, sp, 0, MMU_KERNEL_IDX, 0);
-        /* push data 1 */
-        sp -= 4;
-        cpu_stl_mmuidx_ra(env, sp, 0, MMU_KERNEL_IDX, 0);
-        /* write back 1 / push data 0 */
-        sp -= 4;
-        cpu_stl_mmuidx_ra(env, sp, 0, MMU_KERNEL_IDX, 0);
-        /* write back 1 address */
-        sp -= 4;
-        cpu_stl_mmuidx_ra(env, sp, 0, MMU_KERNEL_IDX, 0);
-        /* write back 2 data */
-        sp -= 4;
-        cpu_stl_mmuidx_ra(env, sp, 0, MMU_KERNEL_IDX, 0);
-        /* write back 2 address */
-        sp -= 4;
-        cpu_stl_mmuidx_ra(env, sp, 0, MMU_KERNEL_IDX, 0);
-        /* write back 3 data */
-        sp -= 4;
-        cpu_stl_mmuidx_ra(env, sp, 0, MMU_KERNEL_IDX, 0);
-        /* write back 3 address */
-        sp -= 4;
-        cpu_stl_mmuidx_ra(env, sp, env->mmu.ar, MMU_KERNEL_IDX, 0);
-        /* fault address */
-        sp -= 4;
-        cpu_stl_mmuidx_ra(env, sp, env->mmu.ar, MMU_KERNEL_IDX, 0);
-        /* write back 1 status */
-        sp -= 2;
-        cpu_stw_mmuidx_ra(env, sp, 0, MMU_KERNEL_IDX, 0);
-        /* write back 2 status */
-        sp -= 2;
-        cpu_stw_mmuidx_ra(env, sp, 0, MMU_KERNEL_IDX, 0);
-        /* write back 3 status */
-        sp -= 2;
-        cpu_stw_mmuidx_ra(env, sp, 0, MMU_KERNEL_IDX, 0);
-        /* special status word */
-        sp -= 2;
-        cpu_stw_mmuidx_ra(env, sp, env->mmu.ssw, MMU_KERNEL_IDX, 0);
-        /* effective address */
-        sp -= 4;
-        cpu_stl_mmuidx_ra(env, sp, env->mmu.ar, MMU_KERNEL_IDX, 0);
-
-        do_stack_frame(env, &sp, 7, oldsr, 0, env->pc);
+        if (m68k_feature(env, M68K_FEATURE_M68010)) {
+            do_stack_frame(env, &sp, 8, oldsr, 0, env->pc);
+        } else {
+            do_stack_frame(env, &sp, 7, oldsr, 0, env->pc);
+        }
         env->mmu.fault = false;
         if (qemu_loglevel_mask(CPU_LOG_INT)) {
             qemu_log("            "

@@ -69,8 +69,16 @@ OBJECT_DECLARE_SIMPLE_TYPE(P20MachineState, P20_MACHINE)
 #define P20_DMA_IPI 4
 
 #define P20_SYS_SCSI    0x0e
+#define P20_SYS_ERR     0x14
 #define P20_SYS_MISC    0x16
 #define P20_SYS_CPUC    0x18
+#define P20_SYS_TRACE   0x1a
+#define P20_SYS_USER    0x1e
+
+#define ERR_UBE_DMA     0x1000
+#define ERR_ABE_DMA     0x0800
+#define ERR_UBE_JOB     0x0010
+#define ERR_ABE_JOB     0x0008
 
 #define MISC_NBOOT_DMA  0x8000
 #define MISC_NBOOT_JOB  0x4000
@@ -97,6 +105,9 @@ struct P20SysState {
     MemoryRegion iomem;
     MemoryRegion mapper;
 
+    uint16_t trace;
+    uint16_t user;
+    uint16_t err;
     uint16_t scsi;
     uint16_t misc;
     uint16_t cpuc;
@@ -132,6 +143,7 @@ static void p20_reset_cpu(M68kCPU *cpu, bool a23)
         cpu->env.aregs[7] = ldl_phys(cs->as, vec);
         cpu->env.pc = ldl_phys(cs->as, vec + 4);
     }
+    cpu->env.mmu.tcr |= M68K_TCR_ENABLED;
 }
 
 static void p20_halt_cpu(M68kCPU *cpu)
@@ -141,19 +153,17 @@ static void p20_halt_cpu(M68kCPU *cpu)
     cpu_reset(cs);
     cs->halted = true;
     cpu->env.hold_reset = true;
+    cpu->env.mmu.tcr |= M68K_TCR_ENABLED;
 }
 
-static int p20_mapper_get_pa(void *opaque, CPUM68KState *env, hwaddr *physical,
-                                int *prot_p, target_ulong address,
-                                int access_type)
+static int p20_mapper_lookup(P20SysState *s, int cpuid, hwaddr *physical,
+                             target_ulong address, int access_type)
 {
-    P20SysState *s = P20_SYS(opaque);
     uint16_t entry0;
     uint16_t entry1;
     int prot = 0;
 
-    trace_p20_mapper_get_phys_addr(address, access_type);
-    if (get_current_cpuid() == 1) {
+    if (cpuid == 1) {
         if ((s->misc & MISC_NBOOT_JOB) == 0) {
             address |= ADDR_A23;
         }
@@ -164,14 +174,12 @@ static int p20_mapper_get_pa(void *opaque, CPUM68KState *env, hwaddr *physical,
     }
     if ((s->misc & MISC_DIS_MAP) || (address >= ADDR_A23)) {
         if ((access_type & ACCESS_SUPER) == 0) {
-            trace_p20_mapper_fail(0);
             return -1;
         }
         *physical = address;
-        *prot_p = PROT_READ | PROT_WRITE | PROT_EXEC;
-        return 0;
+        return PROT_READ | PROT_WRITE | PROT_EXEC;
     }
-    address >>= (MAPPER_PAGE_BITS - 1) & ~1;
+    address = (address >> (MAPPER_PAGE_BITS - 1)) & ~1;
     if (access_type & ACCESS_SUPER) {
         address |= 2 << MAPPER_VBITS;
     }
@@ -181,10 +189,8 @@ static int p20_mapper_get_pa(void *opaque, CPUM68KState *env, hwaddr *physical,
     entry0 |= MAP_E0_REF_MASK;
     if ((entry1 & MAP_E1_R_MASK) == 0) {
         prot |= PROT_READ;
-    } else if ((access_type & (ACCESS_DATA | ACCESS_STORE | ACCESS_CODE)) == ACCESS_DATA) {
-        // Should write/exec also require read access?
-        trace_p20_mapper_fail(1);
-        return -1;
+    } else if ((access_type & (ACCESS_STORE | ACCESS_CODE)) == 0) {
+        return -2;
     }
     if ((entry1 & MAP_E1_W_MASK) == 0) {
         if (access_type & ACCESS_STORE) {
@@ -192,22 +198,44 @@ static int p20_mapper_get_pa(void *opaque, CPUM68KState *env, hwaddr *physical,
             entry0 |= MAP_E0_DIRTY_MASK;
         }
     } else if (access_type & ACCESS_STORE) {
-        trace_p20_mapper_fail(2);
-        return -1;
+        return -3;
     }
     if ((entry1 & MAP_E1_X_MASK) == 0) {
         prot |= PROT_EXEC;
     } else if (access_type & ACCESS_CODE) {
-        trace_p20_mapper_fail(3);
-        return -1;
+        return -4;
     }
     entry0 |= MAP_E0_DIRTY_MASK;
     if ((access_type & ACCESS_DEBUG) == 0) {
         s->map[address] = entry0;
     }
-    // FIXME: User access checks
+    trace_p20_mapper_tlb_fill(*physical, prot);
     *physical = (entry1 & MAP_E1_PHYS_MASK) << MAPPER_PAGE_BITS;
-    *prot_p = prot;
+    // FIXME: User access checks
+    return prot;
+}
+
+static int p20_mapper_get_phys_addr(void *opaque, CPUM68KState *env, hwaddr *physical,
+                                    int *prot, target_ulong address,
+                                    int access_type, target_ulong *page_size)
+{
+    P20SysState *s = P20_SYS(opaque);
+    int cpuid = env_cpu(env)->cpu_index;
+    int result;
+
+    trace_p20_mapper_get_phys_addr(address, access_type);
+    result = p20_mapper_lookup(s, cpuid, physical, address, access_type);
+    if (result <= 0) {
+        if (cpuid == 1) {
+            s->err |= ERR_ABE_JOB;
+        } else {
+            s->err |= ERR_ABE_DMA;
+        }
+        trace_p20_mapper_fail(-result);
+        return -1;
+    }
+    *page_size = 1 << MAPPER_PAGE_BITS;
+    *prot = result;
     return 0;
 }
 
@@ -364,6 +392,9 @@ static uint64_t p20_sys_mmio_read(void *opaque, hwaddr addr, unsigned size)
     uint16_t val;
 
     switch (addr & ~1) {
+    case P20_SYS_ERR:
+        val = s->err;
+        break;
     case P20_SYS_SCSI:
         val = s->scsi;
         break;
@@ -375,6 +406,12 @@ static uint64_t p20_sys_mmio_read(void *opaque, hwaddr addr, unsigned size)
         if (get_current_cpuid() == 1) {
             val |= CPUC_CUR_IS_JOB;
         }
+        break;
+    case P20_SYS_TRACE:
+        val = s->trace;
+        break;
+    case P20_SYS_USER:
+        val = s->user;
         break;
     default:
         val = 0;
@@ -406,7 +443,7 @@ static void p20_sys_mmio_write(void *opaque, hwaddr addr, uint64_t val,
         // Turn a byte write into a r-m-w
         if (addr != 0x11 && addr != 0x10) {
             uint16_t orig;
-            orig = p20_sys_mmio_read(opaque, addr & ~1, size);
+            orig = p20_sys_mmio_read(opaque, addr & ~1, 1);
             if (addr & 1) {
                 val |= orig & 0xff00;
             } else {
@@ -455,6 +492,12 @@ static void p20_sys_mmio_write(void *opaque, hwaddr addr, uint64_t val,
             qemu_log_mask(LOG_UNIMP, "p20_sys_mmio_write unimplemented CPUC_JKPF\n");
         }
         break;
+    case P20_SYS_TRACE:
+        s->trace = val;
+        break;
+    case P20_SYS_USER:
+        s->user = val & 0xff;
+        break;
     case 0x20:
     case 0x40:
     case 0x60:
@@ -476,7 +519,11 @@ static void p20_sys_mmio_write(void *opaque, hwaddr addr, uint64_t val,
     case 0xe0:
     case 0x100:
     case 0x120:
+        s->err &= ~(ERR_ABE_JOB | ERR_UBE_JOB);
+        break;
     case 0x140:
+        s->err &= ~(ERR_ABE_DMA | ERR_UBE_DMA);
+        break;
     case 0x160:
     case 0x180:
     case 0x1a0:
@@ -531,11 +578,11 @@ static void p20_sys_realize(DeviceState *dev, Error **errp)
     }
     s->dma_cpu->env.irq_ack = p20_sys_irq_ack_dma;
     s->dma_cpu->env.irq_ack_arg = s;
-    s->dma_cpu->env.emmu_get_pa = p20_mapper_get_pa;
+    s->dma_cpu->env.emmu_get_phys_addr = p20_mapper_get_phys_addr;
     s->dma_cpu->env.emmu_arg = s;
     s->job_cpu->env.irq_ack = p20_sys_irq_ack_job;
     s->job_cpu->env.irq_ack_arg = s;
-    s->job_cpu->env.emmu_get_pa = p20_mapper_get_pa;
+    s->job_cpu->env.emmu_get_phys_addr = p20_mapper_get_phys_addr;
     s->job_cpu->env.emmu_arg = s;
 }
 
