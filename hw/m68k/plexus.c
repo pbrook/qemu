@@ -47,6 +47,29 @@
 #define MAP_E0_DIRTY_MASK   0x0002
 #define MAP_E0_USER_SHIFT   24
 
+#define SC_I_NARBR  0x8000
+#define SC_I_ZERO   0x4000
+#define SC_I_PERR   0x2000
+#define SC_I_BERR   0x1000
+
+#define SC_R_IOPTR  0x8000
+#define SC_R_MSGPTR 0x4000
+#define SC_R_CDPTR  0x2000
+#define SC_R_SRAM   0x1000
+#define SC_R_SC_RST 0x0800
+#define SC_R_SC_SEL	0x0400
+#define SC_R_SC_BSY	0x0200
+#define SC_R_ARBIT	0x0100
+#define SC_R_SCSIREQ 0x080
+#define SC_R_SCSIMSG 0x040
+#define SC_R_SCSIRST 0x020
+#define SC_R_SCSIIO	0x0010
+#define SC_R_SCSICD	0x0008
+#define SC_R_SCSIATN 0x004
+#define SC_R_SCSIACK 0x002
+#define SC_R_AUTO	0x0001
+
+#define SCSI_BLK_BASE   0x600000
 
 #define RTC_ADDR        0xd00000
 
@@ -68,7 +91,11 @@ OBJECT_DECLARE_SIMPLE_TYPE(P20MachineState, P20_MACHINE)
 #define P20_JOB_IPI 0
 #define P20_DMA_IPI 4
 
-#define P20_SYS_SCSI    0x0e
+#define P20_SYS_SC_CH   0x06
+#define P20_SYS_SC_CL   0x08
+#define P20_SYS_SC_PH   0x0a
+#define P20_SYS_SC_PL   0x0c
+#define P20_SYS_SC_R    0x0e
 #define P20_SYS_ERR     0x14
 #define P20_SYS_MISC    0x16
 #define P20_SYS_CPUC    0x18
@@ -82,12 +109,14 @@ OBJECT_DECLARE_SIMPLE_TYPE(P20MachineState, P20_MACHINE)
 
 #define MISC_NBOOT_DMA  0x8000
 #define MISC_NBOOT_JOB  0x4000
+#define MISC_NSCSIDL    0x2000
+#define MISC_PESC       0x0400
 #define MISC_DIS_MAP    0x0100
 #define MISC_SPARE      0x0080
 #define MISC_DIAG_UART  0x0040
 #define MISC_HOLDMBUS   0x0020
 #define MISC_NRESMB     0x0010
-#define MISC_TODO       0x3e0f // not yet implemented
+#define MISC_TODO       0x1a0f // not yet implemented
 
 #define CPUC_KILL_DMA   0x01
 #define CPUC_NKILL_JOB  0x02
@@ -95,6 +124,12 @@ OBJECT_DECLARE_SIMPLE_TYPE(P20MachineState, P20_MACHINE)
 #define CPUC_INT_JOB    0x08
 #define CPUC_JKPD       0x40
 #define CPUC_CUR_IS_JOB 0x80
+
+enum {
+    PHASE_BUS_FREE,
+    PHASE_SELECTION,
+    PHASE_RESELECTION,
+};
 
 /* P/20 system status and contol */
 struct P20SysState {
@@ -104,16 +139,28 @@ struct P20SysState {
     M68kCPU *job_cpu;
     MemoryRegion iomem;
     MemoryRegion mapper;
+    MemoryRegion scsi_buf_mr;
 
-    uint16_t trace;
-    uint16_t user;
+    AddressSpace *sysmem;
+
+    uint16_t scr;
     uint16_t err;
-    uint16_t scsi;
+    uint32_t sc_c;
+    uint32_t sc_p;
+    uint16_t sc_r;
     uint16_t misc;
     uint16_t cpuc;
+    uint16_t trace;
+    uint16_t user;
 
     p20_irq uart_irq[P20_SYS_UART_IRQ_MAX];
     uint16_t map[4 << MAPPER_VBITS];
+
+    uint8_t scsi_buf[4];
+    uint16_t scsi_int;
+    uint16_t sc_i;
+    int scsi_busmode;
+    int scsi_ptrmode;
 };
 
 #define TYPE_P20_SYS "p20-sys"
@@ -156,11 +203,31 @@ static void p20_halt_cpu(M68kCPU *cpu)
     cpu->env.mmu.tcr |= M68K_TCR_ENABLED;
 }
 
+static uint64_t p20_scsi_buf_read(void *opaque, hwaddr addr, unsigned size)
+{
+    P20SysState *s = P20_SYS(opaque);
+    uint8_t val;
+
+    val = s->scsi_buf[addr];
+    trace_p20_scsi_buf_read(addr, val);
+    return val;
+}
+
+static void p20_scsi_buf_write(void *opaque, hwaddr addr, uint64_t val,
+                            unsigned size)
+{
+    P20SysState *s = P20_SYS(opaque);
+
+    trace_p20_scsi_buf_write(addr, val);
+    s->scsi_buf[addr] = val;
+}
+
 static int p20_mapper_lookup(P20SysState *s, int cpuid, hwaddr *physical,
                              target_ulong address, int access_type)
 {
     uint16_t entry0;
     uint16_t entry1;
+    int idx;
     int prot = 0;
 
     if (cpuid == 1) {
@@ -179,12 +246,12 @@ static int p20_mapper_lookup(P20SysState *s, int cpuid, hwaddr *physical,
         *physical = address;
         return PROT_READ | PROT_WRITE | PROT_EXEC;
     }
-    address = (address >> (MAPPER_PAGE_BITS - 1)) & ~1;
+    idx = (address >> (MAPPER_PAGE_BITS - 1)) & ~1;
     if (access_type & ACCESS_SUPER) {
-        address |= 2 << MAPPER_VBITS;
+        idx |= 2 << MAPPER_VBITS;
     }
-    entry0 = s->map[address];
-    entry1 = s->map[address + 1];
+    entry0 = s->map[idx];
+    entry1 = s->map[idx + 1];
     trace_p20_mapper_entry(entry0, entry1);
     entry0 |= MAP_E0_REF_MASK;
     if ((entry1 & MAP_E1_R_MASK) == 0) {
@@ -207,10 +274,11 @@ static int p20_mapper_lookup(P20SysState *s, int cpuid, hwaddr *physical,
     }
     entry0 |= MAP_E0_DIRTY_MASK;
     if ((access_type & ACCESS_DEBUG) == 0) {
-        s->map[address] = entry0;
+        s->map[idx] = entry0;
     }
+    *physical = ((entry1 & MAP_E1_PHYS_MASK) << MAPPER_PAGE_BITS)
+        | (address & ((1 << MAPPER_PAGE_BITS) - 1));
     trace_p20_mapper_tlb_fill(*physical, prot);
-    *physical = (entry1 & MAP_E1_PHYS_MASK) << MAPPER_PAGE_BITS;
     // FIXME: User access checks
     return prot;
 }
@@ -324,8 +392,6 @@ static uint8_t p20_sys_irq_ack_job(void *opaque)
 
     if (s->cpuc & CPUC_INT_JOB) {
         vector = 0xc1;
-        //s->cpuc &= ~CPUC_INT_JOB;
-        //p20_sys_irq_update_job(s);
     } else {
         vector = 0x0f;
     }
@@ -343,6 +409,9 @@ static void p20_sys_irq_update_dma(P20SysState *s)
             level = 5;
             break;
         }
+    }
+    if (s->scsi_int) {
+        level = 3;
     }
     if (s->cpuc & CPUC_INT_DMA) {
         level = 2;
@@ -365,11 +434,16 @@ static uint8_t p20_sys_irq_ack_dma(void *opaque)
             break;
         }
     }
-    if (vector < 0 && s->cpuc & CPUC_INT_DMA) {
-        vector = 0xc2;
-    }
     if (vector < 0) {
-        vector = 0x0f;
+        if (s->scsi_int) {
+            vector = 0x60 | s->scsi_int;
+            s->scsi_int = 0;
+            p20_sys_irq_update_dma(s);
+        } else if (s->cpuc & CPUC_INT_DMA) {
+            vector = 0xc2;
+        } else {
+            vector = 0x0f;
+        }
     }
     trace_p20_sys_irq_dma_ack(vector);
     return vector;
@@ -395,8 +469,20 @@ static uint64_t p20_sys_mmio_read(void *opaque, hwaddr addr, unsigned size)
     case P20_SYS_ERR:
         val = s->err;
         break;
-    case P20_SYS_SCSI:
-        val = s->scsi;
+    case P20_SYS_SC_CH:
+        val = s->sc_c >> 16;
+        break;
+    case P20_SYS_SC_CL:
+        val = s->sc_c & 0xffff;
+        break;
+    case P20_SYS_SC_PH:
+        val = s->sc_p >> 16;
+        break;
+    case P20_SYS_SC_PL:
+        val = s->sc_p & 0xffff;
+        break;
+    case P20_SYS_SC_R:
+        val = (s->sc_r & 0x0fff) | (s->sc_i & 0xf000);
         break;
     case P20_SYS_MISC:
         val = s->misc;
@@ -431,6 +517,123 @@ static uint64_t p20_sys_mmio_read(void *opaque, hwaddr addr, unsigned size)
     return val;
 }
 
+static void p20_scsi_raise_int(P20SysState *s, int vector)
+{
+    s->scsi_int = vector;
+    p20_sys_irq_update_dma(s);
+}
+
+static int p20_scsi_blk_out(P20SysState *s)
+{
+    hwaddr addr;
+    if (s->sc_r & SC_R_SRAM) {
+        addr = SRAM_ADDR | s->sc_p;
+    } else {
+        int prot;
+        prot = p20_mapper_lookup(s, -1, &addr, SCSI_BLK_BASE + s->sc_p,
+                                 ACCESS_SUPER | ACCESS_DATA);
+        if (prot < 0) {
+            return prot;
+        }
+    }
+
+    s->scsi_buf[3] = ldub_phys(s->sysmem, addr);
+    trace_p20_scsi_blk_out(s->sc_p, addr, s->sc_c, s->scsi_buf[3]);
+    s->sc_p++;
+    s->sc_c--;
+    return 0;
+}
+
+static int p20_scsi_blk_in(P20SysState *s)
+{
+    hwaddr addr;
+    if (s->sc_r & SC_R_SRAM) {
+        addr = SRAM_ADDR | s->sc_p;
+    } else {
+        int prot;
+        prot = p20_mapper_lookup(s, -1, &addr, SCSI_BLK_BASE + s->sc_p,
+                                 ACCESS_SUPER | ACCESS_DATA | ACCESS_STORE);
+        if (prot < 0) {
+            return prot;
+        }
+    }
+    trace_p20_scsi_blk_in(s->sc_p, addr, s->sc_c, s->scsi_buf[3]);
+    stb_phys(s->sysmem, addr, s->scsi_buf[3]);
+    s->sc_p++;
+    s->sc_c--;
+    return 0;
+}
+
+static void p20_scsi_diag(P20SysState *s, uint16_t val)
+{
+    int ptrmode = 0;
+    int busmode = 0;
+    int fault;
+    /* diag mode */
+    trace_p20_scsi_diag(val);
+    if ((val & SC_R_SC_BSY) == 0) {
+        val &= ~SC_R_AUTO;
+    }
+    s->sc_r = val;
+    if (val & SC_R_ARBIT) {
+        p20_scsi_raise_int(s, 1);
+    } else if (val & SC_R_SC_SEL) {
+        p20_scsi_raise_int(s, 2);
+    } else if ((val & SC_R_SCSIREQ) && (val & SC_R_AUTO)) {
+        if (val & SC_R_CDPTR) {
+            ptrmode |= 2;
+        }
+        if (val & SC_R_MSGPTR) {
+            ptrmode |= 4;
+        }
+        if (val & SC_R_IOPTR) {
+            ptrmode |= 1;
+        }
+        if (val & SC_R_SCSICD) {
+            busmode |= 2;
+        }
+        if (val & SC_R_SCSIMSG) {
+            busmode |= 4;
+        }
+        if (val & SC_R_SCSIIO) {
+            busmode |= 1;
+        }
+        if (busmode != ptrmode) {
+            p20_scsi_raise_int(s, 8 | (busmode ^ 7));
+        } else if (s->misc & MISC_PESC) {
+            //s->sc_r &= ~SC_I_NPERR;
+            p20_scsi_raise_int(s, 4);
+        } else {
+            if (busmode & 1) {
+                fault = p20_scsi_blk_in(s);
+            } else {
+                fault = p20_scsi_blk_out(s);
+            }
+            if (fault) {
+                //s->sc_r |= SC_I_BERR;
+                p20_scsi_raise_int(s, 8 | (busmode ^ 7));
+            } else {
+                s->sc_r |= SC_R_SCSIACK;
+                if (s->sc_c == 0 || s->sc_p == 0) {
+                    s->sc_i |= SC_I_ZERO;
+                    p20_scsi_raise_int(s, 8 | (busmode ^ 7));
+                }
+            }
+        }
+    }
+}
+
+static void p20_scsi_reg(P20SysState *s, uint16_t val)
+{
+    s->sc_r = val;
+    if (val & SC_R_ARBIT) {
+        p20_scsi_raise_int(s, 1);
+    } else if ((val & SC_R_SC_SEL) && (val & SC_R_SCSIIO)) { /* diagnostic reselect */
+        p20_scsi_raise_int(s, 2);
+    } else {
+    }
+}
+
 static void p20_sys_mmio_write(void *opaque, hwaddr addr, uint64_t val,
                             unsigned size)
 {
@@ -456,6 +659,31 @@ static void p20_sys_mmio_write(void *opaque, hwaddr addr, uint64_t val,
         break;
     case 0x10: /* Set LED */
         trace_p20_sys_led((int)val);
+        break;
+    case P20_SYS_SC_CH:
+        s->sc_c = (s->sc_c & 0xffff) | ((val & 0xf) << 16);;
+        if (s->sc_c) {
+            s->sc_i &= ~SC_I_ZERO;
+        }
+        break;
+    case P20_SYS_SC_CL:
+        s->sc_c = (s->sc_c & 0xf0000) | val;
+        if (s->sc_c) {
+            s->sc_i &= ~SC_I_ZERO;
+        }
+        break;
+    case P20_SYS_SC_PH:
+        s->sc_p = (s->sc_p & 0xffff) | ((val & 0xf) << 16);;
+        break;
+    case P20_SYS_SC_PL:
+        s->sc_p = (s->sc_p & 0xf0000) | val;
+        break;
+    case P20_SYS_SC_R:
+        if (val & SC_R_SCSIRST) {
+            p20_scsi_diag(s, val);
+        } else {
+            p20_scsi_reg(s, val);
+        }
         break;
     case P20_SYS_MISC:
         val &= ~MISC_SPARE;
@@ -498,8 +726,9 @@ static void p20_sys_mmio_write(void *opaque, hwaddr addr, uint64_t val,
     case P20_SYS_USER:
         s->user = val & 0xff;
         break;
-    case 0x20:
     case 0x40:
+        //s->sc_r |= SC_I_NPERR;
+        break;
     case 0x60:
         s->cpuc &= ~CPUC_INT_JOB;
         p20_sys_irq_update_job(s);
@@ -516,17 +745,23 @@ static void p20_sys_mmio_write(void *opaque, hwaddr addr, uint64_t val,
         s->cpuc |= CPUC_INT_DMA;
         p20_sys_irq_update_dma(s);
         break;
-    case 0xe0:
-    case 0x100:
     case 0x120:
         s->err &= ~(ERR_ABE_JOB | ERR_UBE_JOB);
         break;
     case 0x140:
         s->err &= ~(ERR_ABE_DMA | ERR_UBE_DMA);
         break;
-    case 0x160:
     case 0x180:
+        s->scsi_int = 0;
+        p20_sys_irq_update_dma(s);
+        break;
     case 0x1a0:
+        //s->sc_r |= SC_I_NPERR;
+        break;
+    case 0x20:
+    case 0xe0:
+    case 0x100:
+    case 0x160:
     case 0x1c0:
     case 0x1e0:
         /* Reset actions */
@@ -552,12 +787,20 @@ static const MemoryRegionOps p20_sys_mmio_ops = {
     .endianness = DEVICE_BIG_ENDIAN,
 };
 
+static const MemoryRegionOps p20_scsi_buf_ops = {
+    .read = p20_scsi_buf_read,
+    .write = p20_scsi_buf_write,
+    .impl.max_access_size = 1,
+    .endianness = DEVICE_BIG_ENDIAN,
+};
+
 static void p20_sys_reset(DeviceState *dev)
 {
     P20SysState *s = P20_SYS(dev);
 
     p20_reset_cpu(s->dma_cpu, true);
     p20_halt_cpu(s->job_cpu);
+    //s->sc_r = SC_I_NARBR | SC_I_NPERR | SC_I_NBERR;
 }
 
 static void p20_sys_realize(DeviceState *dev, Error **errp)
@@ -572,6 +815,9 @@ static void p20_sys_realize(DeviceState *dev, Error **errp)
     memory_region_init_io(&s->iomem, OBJECT(s), &p20_sys_mmio_ops, s,
                           "p20.sys", 0x200);
     sysbus_init_mmio(sbd, &s->iomem);
+    memory_region_init_io(&s->scsi_buf_mr, OBJECT(s), &p20_scsi_buf_ops, s,
+                          "p20.scsi-buf", 0x4);
+    sysbus_init_mmio(sbd, &s->scsi_buf_mr);
     qdev_init_gpio_in_named(dev, p20_sys_uart_irq_handler, "uart-irq", 8);
     for (i = 0; i < P20_SYS_UART_IRQ_MAX; i++) {
         s->uart_irq[i].irq = qdev_get_gpio_in_named(dev, "uart-irq", i);
@@ -584,6 +830,7 @@ static void p20_sys_realize(DeviceState *dev, Error **errp)
     s->job_cpu->env.irq_ack_arg = s;
     s->job_cpu->env.emmu_get_phys_addr = p20_mapper_get_phys_addr;
     s->job_cpu->env.emmu_arg = s;
+    s->sysmem = &address_space_memory;
 }
 
 static Property p20_sys_properties[] = {
@@ -651,6 +898,7 @@ static void p20_init(MachineState *machine)
     sysbus_realize_and_unref(SYS_BUS_DEVICE(sys), &error_fatal);
     sysbus_mmio_map(SYS_BUS_DEVICE(sys), 0, MAPPER_RAM_ADDR);
     sysbus_mmio_map(SYS_BUS_DEVICE(sys), 1, 0xe00000);
+    sysbus_mmio_map(SYS_BUS_DEVICE(sys), 2, 0xa70000);
 
     mk68564_create(0xa00000, serial_hd(1), serial_hd(0), &sys->uart_irq[3]);
     mk68564_create(0xa10000, NULL, NULL, &sys->uart_irq[2]);
