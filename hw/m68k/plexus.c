@@ -16,12 +16,12 @@
 #include "qemu/log.h"
 #include "sysemu/reset.h"
 #include "sysemu/sysemu.h"
+#include "hw/scsi/scsi.h"
 #include "hw/m68k/mk68564.h"
 #include "hw/misc/unimp.h"
 #include "trace.h"
 #include "exec/exec-all.h"
 
-// Machine only has 2M installed, but address space is 8M?
 #define MAX_DRAM_SIZE   0x800000
 
 #define ADDR_A23        (1 << 23)
@@ -69,6 +69,17 @@
 #define SC_R_SCSIACK 0x002
 #define SC_R_AUTO	0x0001
 
+typedef enum {
+    PHASE_BUS_FREE,
+    PHASE_ARB,
+    PHASE_SELECT,
+    PHASE_CMD_OUT,
+    PHASE_DATA_OUT,
+    PHASE_DATA_IN,
+    PHASE_STATUS,
+    PHASE_MSG_OUT,
+    PHASE_MSG_IN,
+} scsi_phase;
 #define SCSI_BLK_BASE   0x600000
 
 #define RTC_ADDR        0xd00000
@@ -125,12 +136,6 @@ OBJECT_DECLARE_SIMPLE_TYPE(P20MachineState, P20_MACHINE)
 #define CPUC_JKPD       0x40
 #define CPUC_CUR_IS_JOB 0x80
 
-enum {
-    PHASE_BUS_FREE,
-    PHASE_SELECTION,
-    PHASE_RESELECTION,
-};
-
 /* P/20 system status and contol */
 struct P20SysState {
     SysBusDevice parent_obj;
@@ -140,6 +145,7 @@ struct P20SysState {
     MemoryRegion iomem;
     MemoryRegion mapper;
     MemoryRegion scsi_buf_mr;
+    MemoryRegion mbus_mr;
 
     AddressSpace *sysmem;
 
@@ -161,6 +167,16 @@ struct P20SysState {
     uint16_t sc_i;
     int scsi_busmode;
     int scsi_ptrmode;
+    scsi_phase phase;
+    uint8_t scsi_cmd[16];
+    int scsi_cmd_len;
+    SCSIBus bus;
+    SCSIDevice *scsi_dev;
+    SCSIRequest *scsi_req;
+    uint8_t scsi_req_status;
+    uint8_t *scsi_data_buf;
+    int scsi_data_len;
+    int scsi_data_ack;
 };
 
 #define TYPE_P20_SYS "p20-sys"
@@ -519,54 +535,74 @@ static uint64_t p20_sys_mmio_read(void *opaque, hwaddr addr, unsigned size)
 
 static void p20_scsi_raise_int(P20SysState *s, int vector)
 {
+    trace_p20_scsi_raise_int(vector);
     s->scsi_int = vector;
     p20_sys_irq_update_dma(s);
 }
 
-static int p20_scsi_blk_out(P20SysState *s)
+static int p20_scsi_ptrmode(P20SysState *s)
 {
-    hwaddr addr;
-    if (s->sc_r & SC_R_SRAM) {
-        addr = SRAM_ADDR | s->sc_p;
-    } else {
-        int prot;
-        prot = p20_mapper_lookup(s, -1, &addr, SCSI_BLK_BASE + s->sc_p,
-                                 ACCESS_SUPER | ACCESS_DATA);
-        if (prot < 0) {
-            return prot;
-        }
+    int ptrmode = 0;
+    if (s->sc_r & SC_R_MSGPTR) {
+        ptrmode |= 4;
     }
-
-    s->scsi_buf[3] = ldub_phys(s->sysmem, addr);
-    trace_p20_scsi_blk_out(s->sc_p, addr, s->sc_c, s->scsi_buf[3]);
-    s->sc_p++;
-    s->sc_c--;
-    return 0;
+    if (s->sc_r & SC_R_CDPTR) {
+        ptrmode |= 2;
+    }
+    if (s->sc_r & SC_R_IOPTR) {
+        ptrmode |= 1;
+    }
+    return ptrmode;
 }
 
-static int p20_scsi_blk_in(P20SysState *s)
+static int p20_scsi_blk_xfer(P20SysState *s, uint8_t *data, int busmode)
 {
+    int rc;
     hwaddr addr;
+    int ptrmode = p20_scsi_ptrmode(s);
+    if (ptrmode != busmode) {
+        rc = -10;
+        goto raise;
+    }
     if (s->sc_r & SC_R_SRAM) {
         addr = SRAM_ADDR | s->sc_p;
     } else {
-        int prot;
-        prot = p20_mapper_lookup(s, -1, &addr, SCSI_BLK_BASE + s->sc_p,
-                                 ACCESS_SUPER | ACCESS_DATA | ACCESS_STORE);
-        if (prot < 0) {
-            return prot;
+        int access = ACCESS_SUPER | ACCESS_DATA;
+        if (busmode & 1) {
+            access |= ACCESS_STORE;
+        }
+        rc = p20_mapper_lookup(s, -1, &addr, SCSI_BLK_BASE + s->sc_p,
+                               access);
+        if (rc < 0) {
+            goto raise;
         }
     }
-    trace_p20_scsi_blk_in(s->sc_p, addr, s->sc_c, s->scsi_buf[3]);
-    stb_phys(s->sysmem, addr, s->scsi_buf[3]);
+    if (s->misc & MISC_PESC) {
+        p20_scsi_raise_int(s, 4);
+        return -11;
+    }
+    if (busmode & 1) {
+        stb_phys(s->sysmem, addr, *data);
+    } else {
+        *data = ldub_phys(s->sysmem, addr);
+    }
+    rc = 0;
+    trace_p20_scsi_blk_xfer((busmode & 1) ? 'i' : 'o',
+                            s->sc_p, addr, s->sc_c, *data);
     s->sc_p++;
     s->sc_c--;
-    return 0;
+    if (s->sc_c == 0 || s->sc_p == 0) {
+        s->sc_i |= SC_I_ZERO;
+        goto raise;
+    }
+    return rc;
+raise:
+    p20_scsi_raise_int(s, 8 | (busmode ^ 7));
+    return rc;
 }
 
 static void p20_scsi_diag(P20SysState *s, uint16_t val)
 {
-    int ptrmode = 0;
     int busmode = 0;
     int fault;
     /* diag mode */
@@ -580,15 +616,6 @@ static void p20_scsi_diag(P20SysState *s, uint16_t val)
     } else if (val & SC_R_SC_SEL) {
         p20_scsi_raise_int(s, 2);
     } else if ((val & SC_R_SCSIREQ) && (val & SC_R_AUTO)) {
-        if (val & SC_R_CDPTR) {
-            ptrmode |= 2;
-        }
-        if (val & SC_R_MSGPTR) {
-            ptrmode |= 4;
-        }
-        if (val & SC_R_IOPTR) {
-            ptrmode |= 1;
-        }
         if (val & SC_R_SCSICD) {
             busmode |= 2;
         }
@@ -598,40 +625,225 @@ static void p20_scsi_diag(P20SysState *s, uint16_t val)
         if (val & SC_R_SCSIIO) {
             busmode |= 1;
         }
-        if (busmode != ptrmode) {
-            p20_scsi_raise_int(s, 8 | (busmode ^ 7));
-        } else if (s->misc & MISC_PESC) {
-            //s->sc_r &= ~SC_I_NPERR;
-            p20_scsi_raise_int(s, 4);
-        } else {
-            if (busmode & 1) {
-                fault = p20_scsi_blk_in(s);
-            } else {
-                fault = p20_scsi_blk_out(s);
+        fault = p20_scsi_blk_xfer(s, &s->scsi_buf[3], busmode);
+        if (fault == 0) {
+            s->sc_r |= SC_R_SCSIACK;
+        }
+    }
+}
+
+static void p20_scsi_data_run(P20SysState *s, int busmode)
+{
+    int fault;
+
+    while (s->scsi_data_len && s->sc_c && (s->sc_r & SC_R_AUTO)) {
+        fault = p20_scsi_blk_xfer(s, s->scsi_data_buf, busmode);
+        if (fault) {
+            break;
+        }
+        s->scsi_data_buf++;
+        s->scsi_data_len--;
+        if (s->scsi_data_len == 0) {
+            scsi_req_continue(s->scsi_req);
+        }
+    }
+}
+
+static int p20_scsi_byte_out(P20SysState *s, int busmode, uint8_t data)
+{
+    int fault;
+    s->sc_r &= ~SC_R_SCSIREQ;
+    if (s->sc_c && (s->sc_r & SC_R_AUTO)) {
+        fault = p20_scsi_blk_xfer(s, &data, busmode);
+    } else {
+        fault = 1;
+    }
+    if (fault) {
+        if (s->sc_r & SC_R_SCSIACK) {
+            s->scsi_data_ack = 1;
+        }
+        if (s->scsi_data_ack) {
+            if ((s->sc_r & ~SC_R_SCSIACK) == 0) {
+                s->scsi_data_ack = 0;
+                fault = 0;
             }
+        } else {
+            s->sc_r |= SC_R_SCSIREQ;
+            s->scsi_buf[3] = s->scsi_req_status;
+        }
+    }
+    return fault;
+}
+
+static void p20_scsi_run(P20SysState *s)
+{
+    trace_p20_scsi_run(s->phase, s->sc_r);
+    bool blk_ready = (s->sc_r & SC_R_AUTO) && s->sc_c;
+    int fault;
+
+    switch (s->phase) {
+    case PHASE_CMD_OUT:
+        s->sc_r |= SC_R_SCSICD | SC_R_SC_BSY;
+        s->sc_r &= ~(SC_R_SCSIIO | SC_R_SCSIMSG);
+        while (blk_ready) {
+            qemu_log("scsi_reg: CMD OUT %02x\n", s->scsi_cmd[0]);
+            fault = p20_scsi_blk_xfer(s, &s->scsi_cmd[s->scsi_cmd_len], 2);
             if (fault) {
-                //s->sc_r |= SC_I_BERR;
-                p20_scsi_raise_int(s, 8 | (busmode ^ 7));
-            } else {
-                s->sc_r |= SC_R_SCSIACK;
-                if (s->sc_c == 0 || s->sc_p == 0) {
-                    s->sc_i |= SC_I_ZERO;
-                    p20_scsi_raise_int(s, 8 | (busmode ^ 7));
+                break;
+            }
+            s->scsi_cmd_len++;
+            int cdb_len;
+            switch (s->scsi_cmd[0] >> 5) {
+            case 0: cdb_len = 6; break;
+            case 1: case 2: cdb_len = 10; break;
+            case 5: cdb_len = 12; break;
+            default: cdb_len = 1; break;
+            }
+            if (s->scsi_cmd_len == cdb_len) {
+                qemu_log("scsi_reg: CMD 0x%02x\n", s->scsi_cmd[0]);
+                assert(s->scsi_data_len == 0 && !s->scsi_data_buf);
+                assert(!s->scsi_req);
+                s->scsi_req = scsi_req_new(s->scsi_dev, 0, /*FIXME:lun*/0, s->scsi_cmd, s->scsi_cmd_len, s);
+                int len = scsi_req_enqueue(s->scsi_req);
+                if (len) {
+                    scsi_req_continue(s->scsi_req);
+                    if (len > 0) {
+                        s->phase = PHASE_DATA_IN;
+                        goto do_data_in;
+                    } else {
+                        s->phase = PHASE_DATA_OUT;
+                        goto do_data_out;
+                    }
                 }
+                s->phase = PHASE_STATUS;
+                goto do_status;
             }
         }
+        break;
+    case PHASE_DATA_IN:
+    do_data_in:
+        s->sc_r |= SC_R_SC_BSY | SC_R_SCSIIO;
+        s->sc_r &= ~(SC_R_SCSICD | SC_R_SCSIMSG);
+        if (blk_ready && s->scsi_data_len) {
+            qemu_log("scsi_reg: DATA IN\n");
+            p20_scsi_data_run(s, 1);
+        }
+        break;
+    case PHASE_DATA_OUT:
+    do_data_out:
+        s->sc_r |= SC_R_SC_BSY;
+        s->sc_r &= ~(SC_R_SCSICD | SC_R_SCSIMSG | SC_R_SCSIIO);
+        if (blk_ready && s->scsi_data_len) {
+            qemu_log("scsi_reg: DATA OUT\n");
+            p20_scsi_data_run(s, 0);
+        }
+        break;
+    case PHASE_STATUS:
+    do_status:
+        s->sc_r |= SC_R_SC_BSY | SC_R_SCSICD | SC_R_SCSIIO;
+        s->sc_r &= ~(SC_R_SCSIMSG);
+        if (s->scsi_req == NULL) {
+            fault = p20_scsi_byte_out(s, 3, s->scsi_req_status);
+            if (!fault) {
+                qemu_log("scsi_reg: MSG IN\n");
+                s->phase = PHASE_MSG_IN;
+                goto do_msg_in;
+            }
+        }
+        break;
+    case PHASE_MSG_IN:
+    do_msg_in:
+        s->sc_r |= SC_R_SC_BSY | SC_R_SCSIMSG | SC_R_SCSICD | SC_R_SCSIIO;
+        fault = p20_scsi_byte_out(s, 7, 0);
+        if (!fault) {
+            qemu_log("scsi_reg: BUS FREE\n");
+            s->phase = PHASE_BUS_FREE;
+            s->sc_r &= ~(SC_R_SC_BSY | SC_R_SCSIMSG | SC_R_SCSICD | SC_R_SCSIIO | SC_R_AUTO);
+        }
+        break;
+    default:
+        abort();
     }
 }
 
 static void p20_scsi_reg(P20SysState *s, uint16_t val)
 {
     s->sc_r = val;
-    if (val & SC_R_ARBIT) {
-        p20_scsi_raise_int(s, 1);
-    } else if ((val & SC_R_SC_SEL) && (val & SC_R_SCSIIO)) { /* diagnostic reselect */
-        p20_scsi_raise_int(s, 2);
-    } else {
+    trace_p20_scsi_reg(s->phase, val);
+    switch (s->phase) {
+    case PHASE_BUS_FREE:
+        if (val & SC_R_ARBIT) {
+            qemu_log("scsi_reg: ARBIT\n");
+            p20_scsi_raise_int(s, 1);
+            s->sc_r |= SC_R_SC_BSY;
+            s->phase = PHASE_ARB;
+        }
+        break;
+    case PHASE_ARB:
+        if (val & SC_R_SC_SEL) {
+            if (val & SC_R_SCSIIO) { /* diagnostic reselect */
+                qemu_log("scsi_reg: diag reselect\n");
+                p20_scsi_raise_int(s, 2);
+                s->phase = PHASE_BUS_FREE;
+            } else if ((val & SC_R_SC_BSY) == 0) {
+                qemu_log("scsi_reg: Won arbitration\n");
+                s->phase = PHASE_SELECT;
+                goto do_select;
+            }
+        } else if ((val & SC_R_SC_BSY) == 0) {
+            qemu_log("scsi_reg: gave up bus\n");
+            s->phase = PHASE_BUS_FREE;
+        }
+        break;
+    case PHASE_SELECT:
+    do_select:
+        s->sc_r |= SC_R_SC_BSY;
+        if ((val & SC_R_SC_SEL) == 0) {
+            if ((val & SC_R_SCSIATN) == 0) {
+                qemu_log("scsi_reg: ATN (ignoring)\n");
+            }
+            qemu_log("scsi_reg: SELECT 0x%02x 0x%02x\n", s->scsi_buf[0], s->scsi_buf[1]);
+            s->scsi_dev = scsi_device_find(&s->bus, 0, s->scsi_buf[0], 0);
+            // FIXME: Reject if no device
+            s->phase = PHASE_CMD_OUT;
+            s->scsi_cmd_len = 0;
+            p20_scsi_run(s);
+        }
+        break;
+    case PHASE_CMD_OUT:
+    case PHASE_DATA_OUT:
+    case PHASE_DATA_IN:
+    case PHASE_STATUS:
+    case PHASE_MSG_OUT:
+    case PHASE_MSG_IN:
+        p20_scsi_run(s);
+        break;
     }
+    trace_p20_scsi_regout(s->phase, s->sc_r);
+}
+
+
+static void p20_scsi_transfer_data(SCSIRequest *req, uint32_t len)
+{
+    P20SysState *s = P20_SYS(req->bus->qbus.parent);
+
+    assert(s->phase == PHASE_DATA_IN || s->phase == PHASE_DATA_OUT);
+    assert(s->scsi_data_len == 0 && s->scsi_data_buf == NULL);
+    s->scsi_data_len = len;
+    s->scsi_data_buf = scsi_req_get_buf(s->scsi_req);
+    p20_scsi_run(s);
+}
+
+static void p20_scsi_command_complete(SCSIRequest *req, size_t resid)
+{
+    P20SysState *s = P20_SYS(req->bus->qbus.parent);
+
+    s->phase = PHASE_STATUS;
+    s->scsi_req_status = s->scsi_req->status;
+    trace_p20_scsi_command_complete(s->scsi_req_status);
+    scsi_req_unref(s->scsi_req);
+    s->scsi_req = NULL;
+    p20_scsi_run(s);
 }
 
 static void p20_sys_mmio_write(void *opaque, hwaddr addr, uint64_t val,
@@ -773,6 +985,20 @@ static void p20_sys_mmio_write(void *opaque, hwaddr addr, uint64_t val,
     }
 }
 
+static void p20_mbus_write(void *opaque, hwaddr addr, uint64_t val,
+                            unsigned size)
+{
+    //P20SysState *s = P20_SYS(opaque);
+
+}
+
+static uint64_t p20_mbus_read(void *opaque, hwaddr addr, unsigned size)
+{
+    //P20SysState *s = P20_SYS(opaque);
+
+    return 0;
+}
+
 static const MemoryRegionOps p20_mapper_ops = {
     .read = p20_mapper_read,
     .write = p20_mapper_write,
@@ -794,6 +1020,12 @@ static const MemoryRegionOps p20_scsi_buf_ops = {
     .endianness = DEVICE_BIG_ENDIAN,
 };
 
+static const MemoryRegionOps p20_mbus_ops = {
+    .read = p20_mbus_read,
+    .write = p20_mbus_write,
+    .endianness = DEVICE_BIG_ENDIAN,
+};
+
 static void p20_sys_reset(DeviceState *dev)
 {
     P20SysState *s = P20_SYS(dev);
@@ -802,6 +1034,15 @@ static void p20_sys_reset(DeviceState *dev)
     p20_halt_cpu(s->job_cpu);
     //s->sc_r = SC_I_NARBR | SC_I_NPERR | SC_I_NBERR;
 }
+
+static const struct SCSIBusInfo p20_scsi_info = {
+    .max_target = 7,
+    .max_lun = 4,  /* ??? */
+
+    .transfer_data = p20_scsi_transfer_data,
+    .complete = p20_scsi_command_complete,
+    //??? .cancel = lsi_request_cancelled
+};
 
 static void p20_sys_realize(DeviceState *dev, Error **errp)
 {
@@ -818,6 +1059,9 @@ static void p20_sys_realize(DeviceState *dev, Error **errp)
     memory_region_init_io(&s->scsi_buf_mr, OBJECT(s), &p20_scsi_buf_ops, s,
                           "p20.scsi-buf", 0x4);
     sysbus_init_mmio(sbd, &s->scsi_buf_mr);
+    memory_region_init_io(&s->mbus_mr, OBJECT(s), &p20_mbus_ops, s,
+                          "p20.mbus", 0x100000);
+    sysbus_init_mmio(sbd, &s->mbus_mr);
     qdev_init_gpio_in_named(dev, p20_sys_uart_irq_handler, "uart-irq", 8);
     for (i = 0; i < P20_SYS_UART_IRQ_MAX; i++) {
         s->uart_irq[i].irq = qdev_get_gpio_in_named(dev, "uart-irq", i);
@@ -831,6 +1075,8 @@ static void p20_sys_realize(DeviceState *dev, Error **errp)
     s->job_cpu->env.emmu_get_phys_addr = p20_mapper_get_phys_addr;
     s->job_cpu->env.emmu_arg = s;
     s->sysmem = &address_space_memory;
+
+    scsi_bus_init(&s->bus, sizeof(s->bus), DEVICE(dev), &p20_scsi_info);
 }
 
 static Property p20_sys_properties[] = {
@@ -899,6 +1145,7 @@ static void p20_init(MachineState *machine)
     sysbus_mmio_map(SYS_BUS_DEVICE(sys), 0, MAPPER_RAM_ADDR);
     sysbus_mmio_map(SYS_BUS_DEVICE(sys), 1, 0xe00000);
     sysbus_mmio_map(SYS_BUS_DEVICE(sys), 2, 0xa70000);
+    sysbus_mmio_map(SYS_BUS_DEVICE(sys), 3, 0xb00000);
 
     mk68564_create(0xa00000, serial_hd(1), serial_hd(0), &sys->uart_irq[3]);
     mk68564_create(0xa10000, NULL, NULL, &sys->uart_irq[2]);
