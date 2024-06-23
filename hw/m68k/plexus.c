@@ -43,8 +43,8 @@
 // Docs say we have 13 physical address bits, but we currently only implement
 // 11 to avoid conflict with the directly attached bus devices.
 #define MAP_E1_PHYS_MASK    0x07ff
-#define MAP_E0_REF_MASK     0x0001
-#define MAP_E0_DIRTY_MASK   0x0002
+#define MAP_E0_REF_MASK     0x0002
+#define MAP_E0_DIRTY_MASK   0x0001
 #define MAP_E0_USER_SHIFT   24
 
 #define SC_I_NARBR  0x8000
