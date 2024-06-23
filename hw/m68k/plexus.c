@@ -73,6 +73,7 @@ typedef enum {
     PHASE_BUS_FREE,
     PHASE_ARB,
     PHASE_SELECT,
+    PHASE_SELECT_NODEV,
     PHASE_CMD_OUT,
     PHASE_DATA_OUT,
     PHASE_DATA_IN,
@@ -127,7 +128,9 @@ OBJECT_DECLARE_SIMPLE_TYPE(P20MachineState, P20_MACHINE)
 #define MISC_DIAG_UART  0x0040
 #define MISC_HOLDMBUS   0x0020
 #define MISC_NRESMB     0x0010
-#define MISC_TODO       0x1a0f // not yet implemented
+#define MISC_CINTD_EN   0x0008
+#define MISC_CINTJ_EN   0x0004
+#define MISC_TODO       0x1a03 // not yet implemented
 
 #define CPUC_KILL_DMA   0x01
 #define CPUC_NKILL_JOB  0x02
@@ -160,17 +163,17 @@ struct P20SysState {
     uint16_t user;
 
     p20_irq uart_irq[P20_SYS_UART_IRQ_MAX];
+    bool cint_pending_job;
+    bool cint_pending_dma;
     uint16_t map[4 << MAPPER_VBITS];
 
     uint8_t scsi_buf[4];
     uint16_t scsi_int;
     uint16_t sc_i;
-    int scsi_busmode;
-    int scsi_ptrmode;
     scsi_phase phase;
     uint8_t scsi_cmd[16];
     int scsi_cmd_len;
-    SCSIBus bus;
+    SCSIBus scsi_bus;
     SCSIDevice *scsi_dev;
     SCSIRequest *scsi_req;
     uint8_t scsi_req_status;
@@ -395,7 +398,9 @@ static void p20_sys_irq_update_job(P20SysState *s)
 {
     int level = 0;
 
-    if (s->cpuc & CPUC_INT_JOB) {
+    if (s->cint_pending_job) {
+        level = 6;
+    } else if (s->cpuc & CPUC_INT_JOB) {
         level = 4;
     }
     trace_p20_sys_irq_job(level);
@@ -407,7 +412,9 @@ static uint8_t p20_sys_irq_ack_job(void *opaque)
     P20SysState *s = P20_SYS(opaque);
     int vector;
 
-    if (s->cpuc & CPUC_INT_JOB) {
+    if (s->cint_pending_job) {
+        vector = 0x83;
+    } else if (s->cpuc & CPUC_INT_JOB) {
         vector = 0xc1;
     } else {
         vector = 0x0f;
@@ -421,20 +428,40 @@ static void p20_sys_irq_update_dma(P20SysState *s)
     int level = 0;
     int n;
 
-    for (n = 0; n < P20_SYS_UART_IRQ_MAX; n++) {
-        if (s->uart_irq[n].level) {
-            level = 5;
-            break;
+    if (s->cint_pending_dma) {
+        level = 6;
+    } else {
+        for (n = 0; n < P20_SYS_UART_IRQ_MAX; n++) {
+            if (s->uart_irq[n].level) {
+                level = 5;
+                break;
+            }
         }
     }
-    if (s->scsi_int) {
-        level = 3;
-    }
-    if (s->cpuc & CPUC_INT_DMA) {
-        level = 2;
+    if (level == 0) {
+        if (s->scsi_int) {
+            level = 3;
+        } else if (s->cpuc & CPUC_INT_DMA) {
+            level = 2;
+        }
     }
     trace_p20_sys_irq_dma(level);
     m68k_set_irq_level(s->dma_cpu, level, 0);
+}
+
+static int p20_scsi_busmode(P20SysState *s)
+{
+    int busmode = 0;
+    if (s->sc_r & SC_R_SCSIMSG) {
+        busmode |= 4;
+    }
+    if (s->sc_r & SC_R_SCSICD) {
+        busmode |= 2;
+    }
+    if (s->sc_r & SC_R_SCSIIO) {
+        busmode |= 1;
+    }
+    return busmode;
 }
 
 static uint8_t p20_sys_irq_ack_dma(void *opaque)
@@ -444,16 +471,23 @@ static uint8_t p20_sys_irq_ack_dma(void *opaque)
     int n;
     int vector = -1;
 
-    for (n = 0; n < P20_SYS_UART_IRQ_MAX; n++) {
-        irq = &s->uart_irq[n];
-        if (irq->level) {
-            vector = irq->ack(irq->ack_arg);
-            break;
+    if (s->cint_pending_dma) {
+        vector = 0x83;
+    } else {
+        for (n = 0; n < P20_SYS_UART_IRQ_MAX; n++) {
+            irq = &s->uart_irq[n];
+            if (irq->level) {
+                vector = irq->ack(irq->ack_arg);
+                break;
+            }
         }
     }
     if (vector < 0) {
         if (s->scsi_int) {
             vector = 0x60 | s->scsi_int;
+            if (s->scsi_int == 8) {
+                vector |= p20_scsi_busmode(s) ^ 7;
+            }
             s->scsi_int = 0;
             p20_sys_irq_update_dma(s);
         } else if (s->cpuc & CPUC_INT_DMA) {
@@ -464,6 +498,23 @@ static uint8_t p20_sys_irq_ack_dma(void *opaque)
     }
     trace_p20_sys_irq_dma_ack(vector);
     return vector;
+}
+
+static void p20_sys_clock_irq_handler(void *opaque, int irq, int level)
+{
+    P20SysState *s = P20_SYS(opaque);
+
+    if (!level) {
+        return;
+    }
+    if ((s->misc & MISC_CINTD_EN) && !s->cint_pending_dma) {
+        s->cint_pending_dma = true;
+        p20_sys_irq_update_dma(s);
+    }
+    if ((s->misc & MISC_CINTJ_EN) && !s->cint_pending_job) {
+        s->cint_pending_job = true;
+        p20_sys_irq_update_job(s);
+    }
 }
 
 static void p20_sys_uart_irq_handler(void *opaque, int irq, int level)
@@ -594,11 +645,11 @@ static int p20_scsi_blk_xfer(P20SysState *s, uint8_t *data, int busmode)
     s->sc_c--;
     if (s->sc_c == 0 || s->sc_p == 0) {
         s->sc_i |= SC_I_ZERO;
-        goto raise;
+        p20_scsi_raise_int(s, 8);
     }
     return rc;
 raise:
-    p20_scsi_raise_int(s, 8 | (busmode ^ 7));
+    p20_scsi_raise_int(s, 8);
     return rc;
 }
 
@@ -617,15 +668,7 @@ static void p20_scsi_diag(P20SysState *s, uint16_t val)
     } else if (val & SC_R_SC_SEL) {
         p20_scsi_raise_int(s, 2);
     } else if ((val & SC_R_SCSIREQ) && (val & SC_R_AUTO)) {
-        if (val & SC_R_SCSICD) {
-            busmode |= 2;
-        }
-        if (val & SC_R_SCSIMSG) {
-            busmode |= 4;
-        }
-        if (val & SC_R_SCSIIO) {
-            busmode |= 1;
-        }
+        busmode = p20_scsi_busmode(s);
         fault = p20_scsi_blk_xfer(s, &s->scsi_buf[3], busmode);
         if (fault == 0) {
             s->sc_r |= SC_R_SCSIACK;
@@ -760,10 +803,32 @@ static void p20_scsi_run(P20SysState *s)
             qemu_log("scsi_reg: BUS FREE\n");
             s->phase = PHASE_BUS_FREE;
             s->sc_r &= ~(SC_R_SC_BSY | SC_R_SCSIMSG | SC_R_SCSICD | SC_R_SCSIIO | SC_R_AUTO);
+            s->scsi_dev = NULL;
         }
         break;
     default:
+        fprintf(stderr, "Bad scsi phase %d\n", s->phase);
         abort();
+    }
+}
+
+static void p20_scsi_select_device(P20SysState *s)
+{
+    int id;
+    uint8_t mask;
+
+    assert(!s->scsi_dev);
+
+    mask = s->scsi_buf[1] & 0xf7;
+    for (id = 0; id < 7; id++) {
+        if (mask & (1 << id)) {
+            break;
+        }
+    }
+    qemu_log("scsi_reg: SELECT %d (0x%02x 0x%02x)\n",
+             id, s->scsi_buf[0], s->scsi_buf[1]);
+    if (id < 8) {
+        s->scsi_dev = scsi_device_find(&s->scsi_bus, 0, id, 0);
     }
 }
 
@@ -787,12 +852,24 @@ static void p20_scsi_reg(P20SysState *s, uint16_t val)
                 p20_scsi_raise_int(s, 2);
                 s->phase = PHASE_BUS_FREE;
             } else if ((val & SC_R_SC_BSY) == 0) {
-                qemu_log("scsi_reg: Won arbitration\n");
-                s->phase = PHASE_SELECT;
-                goto do_select;
+                p20_scsi_select_device(s);
+                if (s->scsi_dev) {
+                    s->phase = PHASE_SELECT;
+                    goto do_select;
+                } else {
+                    qemu_log("scsi_reg: no device\n");
+                    s->phase = PHASE_SELECT_NODEV;
+                    break;
+                }
             }
         } else if ((val & SC_R_SC_BSY) == 0) {
             qemu_log("scsi_reg: gave up bus\n");
+            s->phase = PHASE_BUS_FREE;
+        }
+        break;
+    case PHASE_SELECT_NODEV:
+        if ((val & SC_R_SC_SEL) == 0) {
+            qemu_log("scsi_reg: select cancelled\n");
             s->phase = PHASE_BUS_FREE;
         }
         break;
@@ -800,12 +877,9 @@ static void p20_scsi_reg(P20SysState *s, uint16_t val)
     do_select:
         s->sc_r |= SC_R_SC_BSY;
         if ((val & SC_R_SC_SEL) == 0) {
-            if ((val & SC_R_SCSIATN) == 0) {
+            if (val & SC_R_SCSIATN) {
                 qemu_log("scsi_reg: ATN (ignoring)\n");
             }
-            qemu_log("scsi_reg: SELECT 0x%02x 0x%02x\n", s->scsi_buf[0], s->scsi_buf[1]);
-            s->scsi_dev = scsi_device_find(&s->bus, 0, s->scsi_buf[0], 0);
-            // FIXME: Reject if no device
             s->phase = PHASE_CMD_OUT;
             s->scsi_cmd_len = 0;
             p20_scsi_run(s);
@@ -958,6 +1032,14 @@ static void p20_sys_mmio_write(void *opaque, hwaddr addr, uint64_t val,
         s->cpuc |= CPUC_INT_DMA;
         p20_sys_irq_update_dma(s);
         break;
+    case 0xe0:
+        s->cint_pending_job = false;
+        p20_sys_irq_update_job(s);
+        break;
+    case 0x100:
+        s->cint_pending_dma = false;
+        p20_sys_irq_update_dma(s);
+        break;
     case 0x120:
         s->err &= ~(ERR_ABE_JOB | ERR_UBE_JOB);
         break;
@@ -972,8 +1054,6 @@ static void p20_sys_mmio_write(void *opaque, hwaddr addr, uint64_t val,
         //s->sc_r |= SC_I_NPERR;
         break;
     case 0x20:
-    case 0xe0:
-    case 0x100:
     case 0x160:
     case 0x1c0:
     case 0x1e0:
@@ -1063,6 +1143,7 @@ static void p20_sys_realize(DeviceState *dev, Error **errp)
     memory_region_init_io(&s->mbus_mr, OBJECT(s), &p20_mbus_ops, s,
                           "p20.mbus", 0x100000);
     sysbus_init_mmio(sbd, &s->mbus_mr);
+    qdev_init_gpio_in(dev, p20_sys_clock_irq_handler, 1);
     qdev_init_gpio_in_named(dev, p20_sys_uart_irq_handler, "uart-irq", 8);
     for (i = 0; i < P20_SYS_UART_IRQ_MAX; i++) {
         s->uart_irq[i].irq = qdev_get_gpio_in_named(dev, "uart-irq", i);
@@ -1077,7 +1158,7 @@ static void p20_sys_realize(DeviceState *dev, Error **errp)
     s->job_cpu->env.emmu_arg = s;
     s->sysmem = &address_space_memory;
 
-    scsi_bus_init(&s->bus, sizeof(s->bus), DEVICE(dev), &p20_scsi_info);
+    scsi_bus_init(&s->scsi_bus, sizeof(s->scsi_bus), DEVICE(dev), &p20_scsi_info);
 }
 
 static Property p20_sys_properties[] = {
@@ -1125,8 +1206,10 @@ static void p20_init(MachineState *machine)
     memory_region_init_ram(&m->sram, NULL, "sram", SRAM_SIZE, &error_fatal);
     memory_region_add_subregion(address_space_mem, SRAM_ADDR, &m->sram);
 
+#if 0
     memory_region_init_ram(&m->rtc, NULL, "rtc", 0x80, &error_fatal);
     memory_region_add_subregion(address_space_mem, RTC_ADDR, &m->rtc);
+#endif
 
     /* Boot rom.  */
     memory_region_init_rom(&m->prom, NULL, "prom", PROM_SIZE, &error_fatal);
@@ -1153,7 +1236,12 @@ static void p20_init(MachineState *machine)
     mk68564_create(0xa20000, NULL, NULL, &sys->uart_irq[1]);
     mk68564_create(0xa30000, NULL, NULL, &sys->uart_irq[0]);
 
+    sysbus_create_simple("p20-rtc", RTC_ADDR,
+                         qdev_get_gpio_in(DEVICE(sys), 0));
+
     create_unimplemented_device("NOTHING", 0, 0x1000000);
+
+    scsi_bus_legacy_handle_cmdline(&sys->scsi_bus);
 }
 
 // U9P#5 [nINTR] -> [74S240 buffer] U9D#13 && U9D#19 [nG] => U9D#7 [active high] -> U12C#3 [S374 latch D1] (C #11, nOS #1) 
