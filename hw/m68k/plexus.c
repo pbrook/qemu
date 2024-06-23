@@ -288,14 +288,15 @@ static int p20_mapper_lookup(P20SysState *s, int cpuid, hwaddr *physical,
     } else if (access_type & ACCESS_CODE) {
         return -4;
     }
-    entry0 |= MAP_E0_DIRTY_MASK;
+    if ((access_type & ACCESS_SUPER) == 0 && s->user != (entry0 >> 8)) {
+        return -5;
+    }
     if ((access_type & ACCESS_DEBUG) == 0) {
         s->map[idx] = entry0;
     }
     *physical = ((entry1 & MAP_E1_PHYS_MASK) << MAPPER_PAGE_BITS)
         | (address & ((1 << MAPPER_PAGE_BITS) - 1));
     trace_p20_mapper_tlb_fill(*physical, prot);
-    // FIXME: User access checks
     return prot;
 }
 
