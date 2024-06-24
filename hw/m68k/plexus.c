@@ -372,10 +372,16 @@ static void p20_mapper_write(void *opaque, hwaddr addr, uint64_t val,
         }
         s->map[addr] = val >> 16;
         s->map[addr + 1] = val;
-    } else {
-        if (size == 1) {
-            abort();// FIXME
+    } else if (size == 1) {
+        trace_p20_mapper_write8(addr, val);
+        e0 = s->map[addr >> 1];
+        if (addr & 1) {
+            e0 = (e0 & 0xff00) | val;
+        } else {
+            e0 = (e0 & 0xff) | (val << 8);
         }
+        s->map[addr >> 1] = e0;
+    } else {
         trace_p20_mapper_write(addr, val);
         addr >>= 1;
         if (s->map[addr] == val) {
