@@ -237,7 +237,7 @@ static void cf_interrupt_all(CPUM68KState *env, int is_hw)
 
     env->sr |= SR_S;
     if (is_hw) {
-        env->sr = (env->sr & ~SR_I) | (env->pending_level << SR_I_SHIFT);
+        env->sr = (env->sr & ~SR_I) | (env->active_level << SR_I_SHIFT);
         env->sr &= ~SR_M;
     }
     m68k_switch_sp(env);
@@ -382,7 +382,7 @@ static void m68k_interrupt_all(CPUM68KState *env, int is_hw)
     sr &= ~SR_T;
     /* "sets the processor interrupt mask" */
     if (is_hw) {
-        sr |= (env->sr & ~SR_I) | (env->pending_level << SR_I_SHIFT);
+        sr |= (env->sr & ~SR_I) | (env->active_level << SR_I_SHIFT);
     }
     cpu_m68k_set_sr(env, sr);
     sp = env->aregs[7];
@@ -531,16 +531,19 @@ bool m68k_cpu_exec_interrupt(CPUState *cs, int interrupt_request)
 
     if (interrupt_request & CPU_INTERRUPT_HARD
         && ((env->sr & SR_I) >> SR_I_SHIFT) < env->pending_level) {
+        // Reading the interrupt may clear the interrupt condition, so we need to save pending_level now
+        env->active_level = env->pending_level;
         if (env->irq_ack) {
-            env->pending_vector = env->irq_ack(env->irq_ack_arg);
+            cs->exception_index = env->irq_ack(env->irq_ack_arg);
+        } else {
+            /*
+             * Real hardware gets the interrupt vector via an IACK cycle
+             * at this point.  Current emulated hardware doesn't rely on
+             * this, so we provide/save the vector when the interrupt is
+             * first signalled.
+             */
+            cs->exception_index = env->pending_vector;
         }
-        /*
-         * Real hardware gets the interrupt vector via an IACK cycle
-         * at this point.  Current emulated hardware doesn't rely on
-         * this, so we provide/save the vector when the interrupt is
-         * first signalled.
-         */
-        cs->exception_index = env->pending_vector;
         do_interrupt_m68k_hardirq(env);
         return true;
     }

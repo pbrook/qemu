@@ -151,6 +151,7 @@ typedef struct CPUArchState {
 
     int pending_vector;
     int pending_level;
+    int active_level;
 
     bool hold_reset;
 
