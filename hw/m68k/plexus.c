@@ -796,6 +796,7 @@ static void p20_scsi_run(P20SysState *s)
             case 0: cdb_len = 6; break;
             case 1: case 2: cdb_len = 10; break;
             case 5: cdb_len = 12; break;
+            case 6: cdb_len = 6; break;
             default: cdb_len = 1; break;
             }
             if (s->scsi_cmd_len == cdb_len) {
@@ -803,6 +804,12 @@ static void p20_scsi_run(P20SysState *s)
                 assert(s->scsi_data_len == 0);
                 assert(!s->scsi_data_buf);
                 assert(!s->scsi_req);
+                if (s->scsi_cmd[0] == 0xc2) {
+                    /* Magic scsi interposer command */
+                    s->phase = PHASE_STATUS;
+                    s->scsi_req_status = 0;
+                    goto do_status;
+                }
                 s->scsi_req = scsi_req_new(s->scsi_dev, 0, /*FIXME:lun*/0, s->scsi_cmd, s->scsi_cmd_len, s);
                 int len = scsi_req_enqueue(s->scsi_req);
                 if (len) {
