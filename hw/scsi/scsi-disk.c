@@ -1974,6 +1974,7 @@ static int32_t scsi_disk_emulate_command(SCSIRequest *req, uint8_t *buf)
     int buflen;
 
     switch (req->cmd.buf[0]) {
+    case REWIND:
     case INQUIRY:
     case MODE_SENSE:
     case MODE_SENSE_10:
@@ -2019,6 +2020,8 @@ static int32_t scsi_disk_emulate_command(SCSIRequest *req, uint8_t *buf)
     switch (req->cmd.buf[0]) {
     case TEST_UNIT_READY:
         assert(blk_is_available(s->qdev.conf.blk));
+        break;
+    case REWIND:
         break;
     case INQUIRY:
         buflen = scsi_disk_emulate_inquiry(req, outbuf);
@@ -2621,6 +2624,7 @@ static const SCSIReqOps scsi_disk_dma_reqops = {
 
 static const SCSIReqOps *const scsi_disk_reqops_dispatch[256] = {
     [TEST_UNIT_READY]                 = &scsi_disk_emulate_reqops,
+    [REWIND]                          = &scsi_disk_emulate_reqops, /* aka REZERO UNIT */
     [INQUIRY]                         = &scsi_disk_emulate_reqops,
     [MODE_SENSE]                      = &scsi_disk_emulate_reqops,
     [MODE_SENSE_10]                   = &scsi_disk_emulate_reqops,
