@@ -316,6 +316,7 @@ static int p20_mapper_lookup(P20SysState *s, int cpuid, hwaddr *physical,
     }
     *physical = ((entry1 & MAP_E1_PHYS_MASK) << MAPPER_PAGE_BITS)
         | (address & ((1 << MAPPER_PAGE_BITS) - 1));
+    assert(*physical < 0x800000);
     trace_p20_mapper_tlb_fill(*physical, prot);
     return prot;
 }
@@ -330,6 +331,7 @@ static int p20_mapper_get_phys_addr(void *opaque, CPUM68KState *env, hwaddr *phy
 
     result = p20_mapper_lookup(s, cpuid, physical, address, access_type);
     if (result <= 0) {
+        fprintf(stderr, "\nfault %06x 0x%x\n", (int)address, access_type);
         if (cpuid == 1) {
             s->err |= ERR_ABE_JOB;
         } else {
@@ -670,14 +672,15 @@ static int p20_scsi_blk_xfer(P20SysState *s, uint8_t *data)
         s->scsi_buf[0] = *data;
     } else {
         if (s->sc_r & SC_R_SRAM) {
-            addr = SRAM_ADDR | (s->sc_p & ~1);
+            addr = SRAM_ADDR | (s->sc_p & 0x0ffffe);
+            qemu_log("p20_scsi_blk_sram %06x\n", (int)addr);
         } else {
             int access = ACCESS_SUPER | ACCESS_DATA;
             if (!xfer_out) {
                 access |= ACCESS_STORE;
             }
             rc = p20_mapper_lookup(s, -1, &addr,
-                                   SCSI_BLK_BASE + (s->sc_p & ~1), access);
+                                   SCSI_BLK_BASE | (s->sc_p & 0x0ffffe), access);
             if (rc < 0) {
                 p20_scsi_raise_int(s, SC_I_BERR);
                 return rc;
