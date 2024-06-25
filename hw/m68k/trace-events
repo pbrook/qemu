@@ -12,6 +12,8 @@ p20_rtc_write(int addr, int val) "addr 0x%02x val 0x%02x"
 p20_rtc_tick(void) ""
 
 # plexus.c
+p20_halt_cpu(int id) "id %d"
+p20_reset_cpu(int id, int sp, int pc) "id %d sp %06x pc %06x"
 p20_sys_led(int led) "set %x"
 p20_sys_mmio_read(int addr, int val) "addr 0x%02x val 0x%04x"
 p20_sys_mmio_write(int addr, int val) "addr 0x%02x val 0x%04x"

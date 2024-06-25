@@ -189,6 +189,9 @@ struct P20SysState {
 #define TYPE_P20_SYS "p20-sys"
 OBJECT_DECLARE_SIMPLE_TYPE(P20SysState, P20_SYS)
 
+static int p20_mapper_lookup(P20SysState *s, int cpuid, hwaddr *physical,
+                             target_ulong address, int access_type);
+
 static int get_current_cpuid(void)
 {
     if (!current_cpu) {
@@ -198,11 +201,18 @@ static int get_current_cpuid(void)
     return current_cpu->cpu_index;
 }
 
-static void p20_reset_cpu(M68kCPU *cpu, bool a23)
+static void p20_reset_cpu(P20SysState *s, M68kCPU *cpu, bool a23)
 {
     CPUState *cs = CPU(cpu);
-    hwaddr vec = a23 ? ADDR_A23 : 0;
+    hwaddr vec = 0;
+    int fault;
     void *p;
+
+    fault = p20_mapper_lookup(s, cs->cpu_index, &vec, 0,
+                              ACCESS_SUPER | ACCESS_DATA);
+    if (fault < 0) {
+        cpu_abort(cs, "fault reading exception vector");
+    }
 
     cpu_reset(cs);
     p = rom_ptr_for_as(cs->as, vec, 8);
@@ -213,6 +223,7 @@ static void p20_reset_cpu(M68kCPU *cpu, bool a23)
         cpu->env.aregs[7] = ldl_phys(cs->as, vec);
         cpu->env.pc = ldl_phys(cs->as, vec + 4);
     }
+    trace_p20_reset_cpu(cs->cpu_index, cpu->env.aregs[7], cpu->env.pc);
     cpu->env.mmu.tcr |= M68K_TCR_ENABLED;
 }
 
@@ -220,6 +231,7 @@ static void p20_halt_cpu(M68kCPU *cpu)
 {
     CPUState *cs = CPU(cpu);
 
+    trace_p20_halt_cpu(cs->cpu_index);
     cpu_reset(cs);
     cs->halted = true;
     cpu->env.hold_reset = true;
@@ -1081,12 +1093,12 @@ static void p20_sys_mmio_write(void *opaque, hwaddr addr, uint64_t val,
             if (val & CPUC_KILL_DMA) {
                 p20_halt_cpu(s->dma_cpu);
             } else {
-                p20_reset_cpu(s->dma_cpu, (s->misc & MISC_NBOOT_DMA) == 0);
+                p20_reset_cpu(s, s->dma_cpu, (s->misc & MISC_NBOOT_DMA) == 0);
             }
         }
         if (mask & CPUC_NKILL_JOB) {
             if (val & CPUC_NKILL_JOB) {
-                p20_reset_cpu(s->job_cpu, (s->misc & MISC_NBOOT_JOB) == 0);
+                p20_reset_cpu(s, s->job_cpu, (s->misc & MISC_NBOOT_JOB) == 0);
             } else {
                 p20_halt_cpu(s->job_cpu);
             }
@@ -1196,7 +1208,7 @@ static void p20_sys_reset(DeviceState *dev)
 {
     P20SysState *s = P20_SYS(dev);
 
-    p20_reset_cpu(s->dma_cpu, true);
+    p20_reset_cpu(s, s->dma_cpu, true);
     p20_halt_cpu(s->job_cpu);
 
     // Fix rom bugs?
