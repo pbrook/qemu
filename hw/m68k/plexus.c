@@ -331,7 +331,7 @@ static int p20_mapper_get_phys_addr(void *opaque, CPUM68KState *env, hwaddr *phy
 
     result = p20_mapper_lookup(s, cpuid, physical, address, access_type);
     if (result <= 0) {
-        fprintf(stderr, "\nfault %06x 0x%x\n", (int)address, access_type);
+        //fprintf(stderr, "\nfault %06x 0x%x\n", (int)address, access_type);
         if (cpuid == 1) {
             s->err |= ERR_ABE_JOB;
         } else {
@@ -635,7 +635,7 @@ static void p20_scsi_clear_int(P20SysState *s, int flag)
     if ((s->scsi_int & flag) == 0) {
         return;
     }
-    trace_p20_scsi_raise_int(flag);
+    trace_p20_scsi_clear_int(flag);
     s->scsi_int &= ~flag;
     p20_sys_irq_update_dma(s);
 }
@@ -673,7 +673,6 @@ static int p20_scsi_blk_xfer(P20SysState *s, uint8_t *data)
     } else {
         if (s->sc_r & SC_R_SRAM) {
             addr = SRAM_ADDR | (s->sc_p & 0x0ffffe);
-            qemu_log("p20_scsi_blk_sram %06x\n", (int)addr);
         } else {
             int access = ACCESS_SUPER | ACCESS_DATA;
             if (!xfer_out) {
@@ -762,6 +761,9 @@ static void p20_scsi_data_run(P20SysState *s, int busmode)
             s->scsi_data_buf = NULL;
             scsi_req_continue(s->scsi_req);
         }
+    }
+    if (!s->scsi_data_buf) {
+        s->sc_r &= ~SC_R_SCSIREQ;
     }
 }
 
@@ -893,6 +895,7 @@ static void p20_scsi_run(P20SysState *s)
             if (!fault) {
                 qemu_log("scsi_reg: MSG IN\n");
                 s->phase = PHASE_MSG_IN;
+                goto free_bus;
                 goto do_msg_in;
             }
         }
@@ -902,6 +905,7 @@ static void p20_scsi_run(P20SysState *s)
         s->sc_r |= SC_R_SC_BSY | SC_R_SCSIMSG | SC_R_SCSICD | SC_R_SCSIIO;
         fault = p20_scsi_byte_out(s, 7, 0);
         if (!fault) {
+            free_bus:
             qemu_log("scsi_reg: BUS FREE\n");
             s->phase = PHASE_BUS_FREE;
             s->sc_r &= ~(SC_R_SC_BSY | SC_R_SCSIMSG | SC_R_SCSICD | SC_R_SCSIIO | SC_R_AUTO);
@@ -1036,7 +1040,11 @@ static void p20_sys_mmio_write(void *opaque, hwaddr addr, uint64_t val,
     P20SysState *s = P20_SYS(opaque);
     uint16_t mask;
 
-    trace_p20_sys_mmio_write(addr, val);
+    if (addr >= 0x20) {
+        trace_p20_sys_reset_write(addr);
+    } else {
+        trace_p20_sys_mmio_write(addr, val);
+    }
 
     if (size == 1) {
         // Turn a byte write into a r-m-w
@@ -1114,6 +1122,7 @@ static void p20_sys_mmio_write(void *opaque, hwaddr addr, uint64_t val,
         s->trace = val;
         break;
     case P20_SYS_USER:
+        //fprintf(stderr, "uid=%d\n", (int)val);
         s->user = val & 0xff;
         break;
     case 0x40:
@@ -1124,6 +1133,9 @@ static void p20_sys_mmio_write(void *opaque, hwaddr addr, uint64_t val,
         p20_sys_irq_update_job(s);
         break;
     case 0x80:
+        if (s->cpuc & CPUC_INT_JOB) {
+            fprintf(stderr, "Redundant CPUC_INT_JOB\n");
+        }
         s->cpuc |= CPUC_INT_JOB;
         p20_sys_irq_update_job(s);
         break;
@@ -1132,6 +1144,9 @@ static void p20_sys_mmio_write(void *opaque, hwaddr addr, uint64_t val,
         p20_sys_irq_update_dma(s);
         break;
     case 0xc0:
+        if (s->cpuc & CPUC_INT_DMA) {
+            fprintf(stderr, "Redundant CPUC_INT_DMA\n");
+        }
         s->cpuc |= CPUC_INT_DMA;
         p20_sys_irq_update_dma(s);
         break;
