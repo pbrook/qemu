@@ -1215,9 +1215,11 @@ static void p20_sys_reset(DeviceState *dev)
     p20_halt_cpu(s->job_cpu);
 
     // Fix rom bugs?
-    uint8_t *p = rom_ptr_for_as(CPU(s->dma_cpu)->as, 0x806595, 1);
-    *p = 11;
-    //s->sc_r = SC_I_NARBR | SC_I_NPERR | SC_I_NBERR;
+    uint8_t *rom = rom_ptr_for_as(CPU(s->dma_cpu)->as, 0x800000, 0x8000);
+    uint16_t csum = lduw_p(rom + 0x7ffe);
+   assert(csum == 0x6602);
+   rom[0x6595]++;
+   stw_p(rom + 0x7ffe, csum-1);
 }
 
 static const struct SCSIBusInfo p20_scsi_info = {
