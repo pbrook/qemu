@@ -119,6 +119,7 @@ OBJECT_DECLARE_SIMPLE_TYPE(P20MachineState, P20_MACHINE)
 
 #define ERR_UBE_DMA     0x1000
 #define ERR_ABE_DMA     0x0800
+#define ERR_MBTO        0x0020
 #define ERR_UBE_JOB     0x0010
 #define ERR_ABE_JOB     0x0008
 
@@ -277,6 +278,11 @@ static int p20_mapper_lookup(P20SysState *s, int cpuid, hwaddr *physical,
     if ((s->misc & MISC_DIS_MAP) || (address >= ADDR_A23)) {
         if ((access_type & ACCESS_SUPER) == 0) {
             return -1;
+        }
+        /* Multibus magic */
+        if ((address & 0xf80000) == 0xb00000) {
+            s->err |= ERR_MBTO;
+            return -6;
         }
         *physical = address;
         return PROT_READ | PROT_WRITE | PROT_EXEC;
@@ -1123,6 +1129,9 @@ static void p20_sys_mmio_write(void *opaque, hwaddr addr, uint64_t val,
     case P20_SYS_USER:
         s->user = val & 0xff;
         break;
+    case 0x20:
+        s->err &= ~(ERR_MBTO);
+        break;
     case 0x40:
         p20_scsi_clear_int(s, SC_I_PERR);
         break;
@@ -1165,7 +1174,6 @@ static void p20_sys_mmio_write(void *opaque, hwaddr addr, uint64_t val,
     case 0x1a0:
         p20_scsi_clear_int(s, SC_I_BERR);
         break;
-    case 0x20:
     case 0x160:
     case 0x180:
     case 0x1c0:
