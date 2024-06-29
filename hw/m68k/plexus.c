@@ -859,13 +859,13 @@ static void p20_scsi_run(P20SysState *s)
             assert((s->sc_r & SC_R_SCSIACK) == 0);
             qemu_log("scsi_reg: DATA IN\n");
             p20_scsi_data_run(s, 1);
-            if (s->scsi_req == NULL) {
-                qemu_log("scsi_reg: STATUS\n");
-                s->phase = PHASE_STATUS;
-                goto do_status;
-            }
         } else {
             s->sc_r &= ~SC_R_SCSIREQ;
+        }
+        if (s->scsi_req == NULL) {
+            qemu_log("scsi_reg: STATUS\n");
+            s->phase = PHASE_STATUS;
+            goto do_status;
         }
         break;
     case PHASE_DATA_OUT:
@@ -877,13 +877,13 @@ static void p20_scsi_run(P20SysState *s)
             assert((s->sc_r & SC_R_SCSIACK) == 0);
             qemu_log("scsi_reg: DATA OUT\n");
             p20_scsi_data_run(s, 0);
-            if (s->scsi_req == NULL) {
-                qemu_log("scsi_reg: STATUS\n");
-                s->phase = PHASE_STATUS;
-                goto do_status;
-            }
         } else {
             s->sc_r &= ~SC_R_SCSIREQ;
+        }
+        if (s->scsi_req == NULL) {
+            qemu_log("scsi_reg: STATUS\n");
+            s->phase = PHASE_STATUS;
+            goto do_status;
         }
         break;
     case PHASE_STATUS:
