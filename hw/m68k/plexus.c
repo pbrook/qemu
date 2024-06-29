@@ -1122,7 +1122,6 @@ static void p20_sys_mmio_write(void *opaque, hwaddr addr, uint64_t val,
         s->trace = val;
         break;
     case P20_SYS_USER:
-        //fprintf(stderr, "uid=%d\n", (int)val);
         s->user = val & 0xff;
         break;
     case 0x40:

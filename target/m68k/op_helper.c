@@ -23,6 +23,7 @@
 #include "exec/exec-all.h"
 #include "exec/cpu_ldst.h"
 #include "semihosting/semihost.h"
+#include "sysvr2-strace.h"
 
 #if !defined(CONFIG_USER_ONLY)
 
@@ -344,6 +345,18 @@ static inline void do_stack_frame(CPUM68KState *env, uint32_t *sp,
     cpu_stw_mmuidx_ra(env, *sp, sr, MMU_KERNEL_IDX, 0);
 }
 
+uint32_t stget32(void *ctx, uint32_t addr)
+{
+    CPUM68KState *env = (CPUM68KState *)ctx;
+    return cpu_ldl_mmuidx_ra(env, addr, MMU_USER_IDX, 0);
+}
+
+uint8_t stget8(void *ctx, uint32_t addr)
+{
+    CPUM68KState *env = (CPUM68KState *)ctx;
+    return cpu_ldub_mmuidx_ra(env, addr, MMU_USER_IDX, 0);
+}
+
 static void m68k_interrupt_all(CPUM68KState *env, int is_hw)
 {
     CPUState *cs = env_cpu(env);
@@ -442,6 +455,10 @@ static void m68k_interrupt_all(CPUM68KState *env, int is_hw)
 
     default:
         do_stack_frame(env, &sp, 0, oldsr, 0, env->pc);
+        if (cs->exception_index == EXCP_TRAP0 && qemu_loglevel_mask(LOG_STRACE)) {
+            char *strace_buf = m68k_strace(env, env->dregs[0], env->sp[M68K_USP]);
+            qemu_log("strace:%s\n", strace_buf);
+        }
         break;
     }
 

@@ -12,7 +12,8 @@ m68k_ss.add(files(
 m68k_system_ss = ss.source_set()
 m68k_system_ss.add(files(
   'm68k-semi.c',
-  'monitor.c'
+  'monitor.c',
+  'sysvr2-strace.c',
 ))
 
 target_arch += {'m68k': m68k_ss}
