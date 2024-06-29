@@ -80,11 +80,10 @@ throwaway:
             if (ssw & M68K_010_SSW_RR) {
                 //cpu_abort(env_cpu(env), "rte resume");
                 // FIXME: This doesn't work? It just skips the insn
+                // Seems to be close enough!
                 uint16_t insn_size = cpu_lduw_mmuidx_ra(env, sp + 20, MMU_KERNEL_IDX, 0);
                 env->pc += insn_size;
-                qemu_log("RTE resume :-(\n");
             }
-            qemu_log("RTE: %06x\n", env->pc);
             sp += 50;
             break;
         }
@@ -273,7 +272,6 @@ static inline void do_stack_frame(CPUM68KState *env, uint32_t *sp,
             /* Data buffers not implemented (see m68k_rte) */
             /* instruction length */
             cpu_stw_mmuidx_ra(env, *sp + 20, env->mmu.insn_length, MMU_KERNEL_IDX, 0);
-            qemu_log("ACCESS: retaddr %06x pc %06x ssw %04x len %d\n", retaddr, env->pc, env->mmu.ssw, env->mmu.insn_length);
             break;
         case 7:
             /* push data 3 */

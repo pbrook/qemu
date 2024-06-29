@@ -808,7 +808,6 @@ static void p20_scsi_run(P20SysState *s)
         s->sc_r &= ~(SC_R_SCSIIO | SC_R_SCSIMSG);
         s->sc_r |= SC_R_SCSIREQ;
         while (p20_scsi_blk_ready(s)) {
-            qemu_log("scsi_reg: CMD OUT (%d)\n", s->scsi_cmd_len);
             fault = p20_scsi_blk_xfer(s, &s->scsi_cmd[s->scsi_cmd_len]);
             if (fault) {
                 break;
@@ -823,7 +822,7 @@ static void p20_scsi_run(P20SysState *s)
             default: cdb_len = 1; break;
             }
             if (s->scsi_cmd_len == cdb_len) {
-                qemu_log("scsi_reg: CMD 0x%02x\n", s->scsi_cmd[0]);
+                trace_p20_scsi_cmd(s->scsi_cmd[0]);
                 assert(s->scsi_data_len == 0);
                 assert(!s->scsi_data_buf);
                 assert(!s->scsi_req);
@@ -839,13 +838,16 @@ static void p20_scsi_run(P20SysState *s)
                     scsi_req_continue(s->scsi_req);
                     if (len > 0) {
                         s->phase = PHASE_DATA_IN;
+                        trace_p20_scsi_phase("DATA IN");
                         goto do_data_in;
                     } else {
                         s->phase = PHASE_DATA_OUT;
+                        trace_p20_scsi_phase("DATA OUT");
                         goto do_data_out;
                     }
                 }
                 s->phase = PHASE_STATUS;
+                trace_p20_scsi_phase("STATUS");
                 goto do_status;
             }
         }
@@ -857,13 +859,12 @@ static void p20_scsi_run(P20SysState *s)
         if (s->scsi_data_len) {
             s->sc_r |= SC_R_SCSIREQ;
             assert((s->sc_r & SC_R_SCSIACK) == 0);
-            qemu_log("scsi_reg: DATA IN\n");
             p20_scsi_data_run(s, 1);
         } else {
             s->sc_r &= ~SC_R_SCSIREQ;
         }
         if (s->scsi_req == NULL) {
-            qemu_log("scsi_reg: STATUS\n");
+            trace_p20_scsi_phase("STATUS");
             s->phase = PHASE_STATUS;
             goto do_status;
         }
@@ -875,13 +876,12 @@ static void p20_scsi_run(P20SysState *s)
         if (s->scsi_data_len) {
             s->sc_r |= SC_R_SCSIREQ;
             assert((s->sc_r & SC_R_SCSIACK) == 0);
-            qemu_log("scsi_reg: DATA OUT\n");
             p20_scsi_data_run(s, 0);
         } else {
             s->sc_r &= ~SC_R_SCSIREQ;
         }
         if (s->scsi_req == NULL) {
-            qemu_log("scsi_reg: STATUS\n");
+            trace_p20_scsi_phase("STATUS");
             s->phase = PHASE_STATUS;
             goto do_status;
         }
@@ -893,7 +893,7 @@ static void p20_scsi_run(P20SysState *s)
         if (s->scsi_req == NULL) {
             fault = p20_scsi_byte_out(s, 3, s->scsi_req_status);
             if (!fault) {
-                qemu_log("scsi_reg: MSG IN\n");
+                trace_p20_scsi_phase("MSG IN");
                 s->phase = PHASE_MSG_IN;
                 goto free_bus;
                 goto do_msg_in;
@@ -906,7 +906,7 @@ static void p20_scsi_run(P20SysState *s)
         fault = p20_scsi_byte_out(s, 7, 0);
         if (!fault) {
             free_bus:
-            qemu_log("scsi_reg: BUS FREE\n");
+            trace_p20_scsi_phase("BUS FREE");
             s->phase = PHASE_BUS_FREE;
             s->sc_r &= ~(SC_R_SC_BSY | SC_R_SCSIMSG | SC_R_SCSICD | SC_R_SCSIIO | SC_R_AUTO);
             p20_scsi_clear_int(s, SC_I_PTR);
@@ -934,8 +934,7 @@ static void p20_scsi_select_device(P20SysState *s)
             break;
         }
     }
-    qemu_log("scsi_reg: SELECT %d (0x%02x 0x%02x)\n",
-             id, s->scsi_buf[0], s->scsi_buf[1]);
+    trace_p20_scsi_select(id);
     if (id < 8) {
         s->scsi_dev = scsi_device_find(&s->scsi_bus, 0, id, 0);
     }
@@ -948,7 +947,7 @@ static void p20_scsi_reg(P20SysState *s, uint16_t val)
     switch (s->phase) {
     case PHASE_BUS_FREE:
         if (val & SC_R_ARBIT) {
-            qemu_log("scsi_reg: ARBIT\n");
+            trace_p20_scsi_phase("ARBIT");
             p20_scsi_raise_int(s, SC_I_ARBIT);
             s->sc_r |= SC_R_SC_BSY;
             s->phase = PHASE_ARB;
@@ -957,7 +956,7 @@ static void p20_scsi_reg(P20SysState *s, uint16_t val)
     case PHASE_ARB:
         if (val & SC_R_SC_SEL) {
             if (val & SC_R_SCSIIO) { /* diagnostic reselect */
-                qemu_log("scsi_reg: diag reselect\n");
+                trace_p20_scsi_phase("DIAG RESELECT");
                 p20_scsi_raise_int(s, SC_I_RESEL);
                 s->phase = PHASE_BUS_FREE;
             } else if ((val & SC_R_SC_BSY) == 0) {
@@ -966,19 +965,19 @@ static void p20_scsi_reg(P20SysState *s, uint16_t val)
                     s->phase = PHASE_SELECT;
                     goto do_select;
                 } else {
-                    qemu_log("scsi_reg: no device\n");
+                    trace_p20_scsi_phase("NODEV");
                     s->phase = PHASE_SELECT_NODEV;
                     break;
                 }
             }
         } else if ((val & SC_R_SC_BSY) == 0) {
-            qemu_log("scsi_reg: gave up bus\n");
+            trace_p20_scsi_phase("BUS FREE");
             s->phase = PHASE_BUS_FREE;
         }
         break;
     case PHASE_SELECT_NODEV:
         if ((val & SC_R_SC_SEL) == 0) {
-            qemu_log("scsi_reg: select cancelled\n");
+            trace_p20_scsi_phase("BUS FREE");
             s->phase = PHASE_BUS_FREE;
         }
         break;
@@ -987,7 +986,7 @@ static void p20_scsi_reg(P20SysState *s, uint16_t val)
         s->sc_r |= SC_R_SC_BSY;
         if ((val & SC_R_SC_SEL) == 0) {
             if (val & SC_R_SCSIATN) {
-                qemu_log("scsi_reg: ATN (ignoring)\n");
+                qemu_log("scsi ATN (ignoring)\n");
             }
             s->phase = PHASE_CMD_OUT;
             s->scsi_cmd_len = 0;
