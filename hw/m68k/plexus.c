@@ -307,7 +307,12 @@ static int p20_mapper_lookup(P20SysState *s, int cpuid, hwaddr *physical,
             entry0 |= MAP_E0_DIRTY_MASK;
         }
     } else if (access_type & ACCESS_STORE) {
-        return -3;
+        if (idx == 0x1000) {
+            /* Magic hack for /dev/rk rkstrategy reset vector write */
+            prot |= PROT_WRITE;
+        } else {
+            return -3;
+        }
     }
     if ((entry1 & MAP_E1_X_MASK) == 0) {
         prot |= PROT_EXEC;
