@@ -1166,7 +1166,7 @@ static void p20_sys_mmio_write(void *opaque, hwaddr addr, uint64_t val,
         p20_sys_irq_update_dma(s);
         break;
     case 0x120:
-        s->err &= ~(ERR_ABE_JOB | ERR_UBE_JOB);
+        s->err &= ~(ERR_ABE_JOB | ERR_UBE_JOB | ERR_MBTO);
         break;
     case 0x140:
         s->err &= ~(ERR_ABE_DMA | ERR_UBE_DMA);
