@@ -37,6 +37,8 @@
 #define MBUS_ADDR       0xb00000
 #define MBUS_RAM_ADDR   0x700000
 
+#define PARITY_HACK_ADDR 0x1000000
+
 #define MAPPER_PAGE_BITS    12
 #define MAPPER_VBITS        (23 - MAPPER_PAGE_BITS)
 #define MAPPER_RAM_ADDR     0x900000
@@ -111,6 +113,7 @@ OBJECT_DECLARE_SIMPLE_TYPE(P20MachineState, P20_MACHINE)
 #define P20_JOB_IPI 0
 #define P20_DMA_IPI 4
 
+#define P20_SYS_PERR1   0x00
 #define P20_SYS_MBERR   0x04
 #define P20_SYS_SC_CH   0x06
 #define P20_SYS_SC_CL   0x08
@@ -123,6 +126,11 @@ OBJECT_DECLARE_SIMPLE_TYPE(P20MachineState, P20_MACHINE)
 #define P20_SYS_TRACE   0x1a
 #define P20_SYS_USER    0x1e
 
+#define PERR1_PEH       0x2000
+#define PERR1_PEL       0x1000
+#define PERR1_DMA       0x0200
+#define PERR1_JOB       0x0100
+
 #define ERR_UBE_DMA     0x1000
 #define ERR_ABE_DMA     0x0800
 #define ERR_MBTO        0x0020
@@ -132,6 +140,8 @@ OBJECT_DECLARE_SIMPLE_TYPE(P20MachineState, P20_MACHINE)
 #define MISC_NBOOT_DMA  0x8000
 #define MISC_NBOOT_JOB  0x4000
 #define MISC_NSCSIDL    0x2000
+#define MISC_PEH        0x1000
+#define MISC_PEL        0x0800
 #define MISC_PESC       0x0400
 #define MISC_DIAG_MB    0x0200
 #define MISC_DIS_MAP    0x0100
@@ -142,7 +152,7 @@ OBJECT_DECLARE_SIMPLE_TYPE(P20MachineState, P20_MACHINE)
 #define MISC_NRESMB     0x0010
 #define MISC_CINTD_EN   0x0008
 #define MISC_CINTJ_EN   0x0004
-#define MISC_TODO       0x1803 // not yet implemented
+#define MISC_TODO       0x0003 // not yet implemented
 
 #define CPUC_KILL_DMA   0x01
 #define CPUC_NKILL_JOB  0x02
@@ -161,9 +171,11 @@ struct P20SysState {
     MemoryRegion mapper;
     MemoryRegion scsi_buf_mr;
     MemoryRegion mbus_mr;
+    MemoryRegion parity_mr;
 
     AddressSpace *sysmem;
 
+    uint16_t perr1;
     uint16_t scr;
     uint16_t err;
     uint32_t sc_c;
@@ -180,6 +192,8 @@ struct P20SysState {
     uint16_t mbus_int;
     uint16_t mbus_err;
     uint16_t map[4 << MAPPER_VBITS];
+    uint32_t parity_odd;
+    uint32_t parity_even;
 
     uint8_t scsi_buf[4];
     uint16_t scsi_int;
@@ -268,6 +282,15 @@ static void p20_scsi_buf_write(void *opaque, hwaddr addr, uint64_t val,
     s->scsi_buf[addr] = val;
 }
 
+static bool p20_parity_hack_enabled(P20SysState *s)
+{
+    if (s->misc & (MISC_PEL | MISC_PEH)
+        || s->parity_odd || s->parity_even) {
+        return true;
+    }
+    return false;
+}
+
 static int p20_mapper_lookup(P20SysState *s, int cpuid, hwaddr *physical,
                              target_ulong address, int access_type)
 {
@@ -290,6 +313,10 @@ static int p20_mapper_lookup(P20SysState *s, int cpuid, hwaddr *physical,
             return -1;
         }
         *physical = address;
+        if (address < 0x1000 && p20_parity_hack_enabled(s)) {
+            trace_p20_parity_hack();
+            *physical |= PARITY_HACK_ADDR;
+        }
         return PROT_READ | PROT_WRITE | PROT_EXEC;
     }
     trace_p20_mapper_lookup(address, access_type);
@@ -438,7 +465,9 @@ static void p20_sys_irq_update_job(P20SysState *s)
 {
     int level = 0;
 
-    if (s->cint_pending_job) {
+    if (s->perr1 & PERR1_JOB) {
+        level = 7;
+    } else if (s->cint_pending_job) {
         level = 6;
     } else if (s->cpuc & CPUC_INT_JOB) {
         level = 4;
@@ -454,7 +483,9 @@ static uint8_t p20_sys_irq_ack_job(void *opaque)
     P20SysState *s = P20_SYS(opaque);
     int vector;
 
-    if (s->cint_pending_job) {
+    if (s->perr1 & PERR1_JOB) {
+        vector = 0x41;
+    } else if (s->cint_pending_job) {
         vector = 0x83;
     } else if (s->cpuc & CPUC_INT_JOB) {
         vector = 0xc1;
@@ -473,7 +504,9 @@ static void p20_sys_irq_update_dma(P20SysState *s)
     int level = 0;
     int n;
 
-    if (s->cint_pending_dma) {
+    if (s->perr1 & PERR1_DMA) {
+        level = 7;
+    } else if (s->cint_pending_dma) {
         level = 6;
     } else {
         for (n = 0; n < P20_SYS_UART_IRQ_MAX; n++) {
@@ -516,7 +549,9 @@ static uint8_t p20_sys_irq_ack_dma(void *opaque)
     int n;
     int vector = -1;
 
-    if (s->cint_pending_dma) {
+    if (s->perr1 & PERR1_DMA) {
+        vector = 0x41;
+    } else if (s->cint_pending_dma) {
         vector = 0x83;
     } else {
         for (n = 0; n < P20_SYS_UART_IRQ_MAX; n++) {
@@ -586,6 +621,9 @@ static uint64_t p20_sys_mmio_read(void *opaque, hwaddr addr, unsigned size)
     uint16_t val;
 
     switch (addr & ~1) {
+    case P20_SYS_PERR1:
+        val = s->perr1;
+        break;
     case P20_SYS_MBERR:
         val = s->mbus_err;
         break;
@@ -1113,7 +1151,7 @@ static void p20_sys_mmio_write(void *opaque, hwaddr addr, uint64_t val,
                           (uint16_t)(mask & MISC_TODO));
         }
         s->misc = val;
-        if (mask & (MISC_NBOOT_DMA | MISC_NBOOT_JOB | MISC_DIS_MAP)) {
+        if (mask & (MISC_NBOOT_DMA | MISC_NBOOT_JOB | MISC_DIS_MAP | MISC_PEL | MISC_PEH)) {
             tlb_flush_all_cpus_synced(current_cpu);
         }
         break;
@@ -1192,6 +1230,19 @@ static void p20_sys_mmio_write(void *opaque, hwaddr addr, uint64_t val,
         p20_scsi_clear_int(s, SC_I_BERR);
         break;
     case 0x160:
+        if (s->perr1) {
+            trace_p20_parity_clear();
+            uint16_t oldval = s->perr1;
+            s->perr1  = 0;
+            tlb_flush_page_by_mmuidx_all_cpus_synced(current_cpu, 0,
+                                                     1 << MMU_KERNEL_IDX);
+            if (oldval & PERR1_JOB) {
+                p20_sys_irq_update_job(s);
+            } else {
+                p20_sys_irq_update_dma(s);
+            }
+        }
+        break;
     case 0x180:
     case 0x1c0:
     case 0x1e0:
@@ -1261,6 +1312,50 @@ static uint64_t p20_mbus_read(void *opaque, hwaddr offset, unsigned size)
     return 0;
 }
 
+static void p20_parity_write(void *opaque, hwaddr offset, uint64_t val,
+                            unsigned size)
+{
+    P20SysState *s = P20_SYS(opaque);
+    /* The MISC_PEL and MISC_PEH bits see to be reversed
+       MISC_PEL causes a parity error on even (High) addesses */
+    if ((s->misc & MISC_PEL) && (offset & 1) == 0) {
+        trace_p20_parity_set(offset);
+        s->parity_even = offset;
+    }
+    if ((s->misc & MISC_PEH) && (offset & 1)) {
+        trace_p20_parity_set(offset);
+        s->parity_odd = offset;
+    }
+    stb_phys(s->sysmem, offset, val);
+}
+
+static void p20_parity_error(P20SysState *s)
+{
+    if (get_current_cpuid() == 0) {
+        s->perr1 |= PERR1_DMA;
+        p20_sys_irq_update_dma(s);
+    } else {
+        s->perr1 |= PERR1_JOB;
+        p20_sys_irq_update_job(s);
+    }
+    trace_p20_parity_error(s->perr1);
+}
+
+static uint64_t p20_parity_read(void *opaque, hwaddr offset, unsigned size)
+{
+    P20SysState *s = P20_SYS(opaque);
+    if (offset == s->parity_even) {
+        s->perr1 = PERR1_PEH;
+        s->parity_even = 0;
+        p20_parity_error(s);
+    } else if (offset == s->parity_odd) {
+        s->perr1 = PERR1_PEL;
+        s->parity_odd = 0;
+        p20_parity_error(s);
+    }
+    return ldub_phys(s->sysmem, offset);
+}
+
 static const MemoryRegionOps p20_mapper_ops = {
     .read = p20_mapper_read,
     .write = p20_mapper_write,
@@ -1288,6 +1383,14 @@ static const MemoryRegionOps p20_mbus_ops = {
     .endianness = DEVICE_BIG_ENDIAN,
     .impl.min_access_size = 1,
     .impl.max_access_size = 2,
+};
+
+static const MemoryRegionOps p20_parity_ops = {
+    .read = p20_parity_read,
+    .write = p20_parity_write,
+    .endianness = DEVICE_BIG_ENDIAN,
+    .impl.min_access_size = 1,
+    .impl.max_access_size = 1,
 };
 
 static void p20_sys_reset(DeviceState *dev)
@@ -1332,6 +1435,9 @@ static void p20_sys_realize(DeviceState *dev, Error **errp)
     memory_region_init_io(&s->mbus_mr, OBJECT(s), &p20_mbus_ops, s,
                           "p20.mbus", 0x100000);
     sysbus_init_mmio(sbd, &s->mbus_mr);
+    memory_region_init_io(&s->parity_mr, OBJECT(s), &p20_parity_ops, s,
+                          "p20.parity", 0x1000);
+    sysbus_init_mmio(sbd, &s->parity_mr);
     qdev_init_gpio_in(dev, p20_sys_clock_irq_handler, 1);
     qdev_init_gpio_in_named(dev, p20_sys_uart_irq_handler, "uart-irq", 8);
     for (i = 0; i < P20_SYS_UART_IRQ_MAX; i++) {
@@ -1419,6 +1525,7 @@ static void p20_init(MachineState *machine)
     sysbus_mmio_map(SYS_BUS_DEVICE(sys), 1, 0xe00000);
     sysbus_mmio_map(SYS_BUS_DEVICE(sys), 2, SCSI_BUF_ADDR);
     sysbus_mmio_map(SYS_BUS_DEVICE(sys), 3, MBUS_ADDR);
+    sysbus_mmio_map(SYS_BUS_DEVICE(sys), 4, PARITY_HACK_ADDR);
 
     mk68564_create(0xa00000, serial_hd(1), serial_hd(0), &sys->uart_irq[3]);
     mk68564_create(0xa10000, NULL, NULL, &sys->uart_irq[2]);
