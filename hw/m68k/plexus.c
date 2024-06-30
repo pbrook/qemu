@@ -12,6 +12,7 @@
 #include "hw/boards.h"
 #include "hw/loader.h"
 #include "hw/sysbus.h"
+#include "qemu/datadir.h"
 #include "qemu/error-report.h"
 #include "qemu/log.h"
 #include "sysemu/reset.h"
@@ -27,6 +28,7 @@
 #define ADDR_A23        (1 << 23)
 
 #define PROM_ADDR       0x800000
+#define PROM_IMG_SIZE    0x08000
 #define PROM_SIZE        0x10000
 
 #define SRAM_ADDR       0xc00000
@@ -1490,12 +1492,26 @@ static const TypeInfo p20_sys_info = {
     .class_init = p20_sys_class_init,
 };
 
+static void p20_load_prom_file(const char *base_filename, hwaddr addr, int size)
+{
+    char *filename;
+    int rom_loaded = -1;
+
+    filename = qemu_find_file(QEMU_FILE_TYPE_BIOS, base_filename);
+    if (filename) {
+        rom_loaded = load_image_targphys(filename, addr, size);
+        g_free(filename);
+    }
+    if (rom_loaded < 0) {
+        error_report("Could not load rom '%s'", base_filename);
+        exit(1);
+    }
+}
+
 static void p20_init(MachineState *machine)
 {
     P20MachineState *m = P20_MACHINE(machine);
     //ram_addr_t ram_size = machine->ram_size;
-    const char *prom_filename = machine->kernel_filename;
-    int rom_loaded;
     MemoryRegion *address_space_mem = get_system_memory();
     P20SysState *sys;
 
@@ -1517,11 +1533,8 @@ static void p20_init(MachineState *machine)
     /* Boot rom.  */
     memory_region_init_rom(&m->prom, NULL, "prom", PROM_SIZE, &error_fatal);
     memory_region_add_subregion(address_space_mem, PROM_ADDR, &m->prom);
-    rom_loaded = load_image_targphys(prom_filename, PROM_ADDR, PROM_SIZE);
-    if (rom_loaded < 0) {
-        error_report("Could not load rom '%s'", prom_filename);
-        exit(1);
-    }
+    p20_load_prom_file("U17-MERGED.BIN", PROM_ADDR, PROM_IMG_SIZE);
+    p20_load_prom_file("U15-MERGED.BIN", PROM_ADDR + PROM_IMG_SIZE, PROM_IMG_SIZE);
 
     sys = P20_SYS(qdev_new(TYPE_P20_SYS));
     object_property_set_link(OBJECT(sys), "dma-cpu",
