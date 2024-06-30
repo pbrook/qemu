@@ -32,6 +32,11 @@
 #define SRAM_ADDR       0xc00000
 #define SRAM_SIZE         0x4000
 
+#define SCSI_BUF_ADDR   0xa70000
+
+#define MBUS_ADDR       0xb00000
+#define MBUS_RAM_ADDR   0x700000
+
 #define MAPPER_PAGE_BITS    12
 #define MAPPER_VBITS        (23 - MAPPER_PAGE_BITS)
 #define MAPPER_RAM_ADDR     0x900000
@@ -106,6 +111,7 @@ OBJECT_DECLARE_SIMPLE_TYPE(P20MachineState, P20_MACHINE)
 #define P20_JOB_IPI 0
 #define P20_DMA_IPI 4
 
+#define P20_SYS_MBERR   0x04
 #define P20_SYS_SC_CH   0x06
 #define P20_SYS_SC_CL   0x08
 #define P20_SYS_SC_PH   0x0a
@@ -127,14 +133,16 @@ OBJECT_DECLARE_SIMPLE_TYPE(P20MachineState, P20_MACHINE)
 #define MISC_NBOOT_JOB  0x4000
 #define MISC_NSCSIDL    0x2000
 #define MISC_PESC       0x0400
+#define MISC_DIAG_MB    0x0200
 #define MISC_DIS_MAP    0x0100
+#define MISC_TBUSY      0x0080
 #define MISC_SPARE      0x0080
 #define MISC_DIAG_UART  0x0040
 #define MISC_HOLDMBUS   0x0020
 #define MISC_NRESMB     0x0010
 #define MISC_CINTD_EN   0x0008
 #define MISC_CINTJ_EN   0x0004
-#define MISC_TODO       0x1a03 // not yet implemented
+#define MISC_TODO       0x1803 // not yet implemented
 
 #define CPUC_KILL_DMA   0x01
 #define CPUC_NKILL_JOB  0x02
@@ -169,6 +177,8 @@ struct P20SysState {
     p20_irq uart_irq[P20_SYS_UART_IRQ_MAX];
     bool cint_pending_job;
     bool cint_pending_dma;
+    uint16_t mbus_int;
+    uint16_t mbus_err;
     uint16_t map[4 << MAPPER_VBITS];
 
     uint8_t scsi_buf[4];
@@ -278,11 +288,6 @@ static int p20_mapper_lookup(P20SysState *s, int cpuid, hwaddr *physical,
     if ((s->misc & MISC_DIS_MAP) || (address >= ADDR_A23)) {
         if ((access_type & ACCESS_SUPER) == 0) {
             return -1;
-        }
-        /* Multibus magic */
-        if ((address & 0xf80000) == 0xb00000) {
-            s->err |= ERR_MBTO;
-            return -6;
         }
         *physical = address;
         return PROT_READ | PROT_WRITE | PROT_EXEC;
@@ -437,6 +442,8 @@ static void p20_sys_irq_update_job(P20SysState *s)
         level = 6;
     } else if (s->cpuc & CPUC_INT_JOB) {
         level = 4;
+    } else if (s->mbus_int) {
+        level = 1;
     }
     trace_p20_sys_irq_job(level);
     m68k_set_irq_level(s->job_cpu, level, 0);
@@ -451,6 +458,9 @@ static uint8_t p20_sys_irq_ack_job(void *opaque)
         vector = 0x83;
     } else if (s->cpuc & CPUC_INT_JOB) {
         vector = 0xc1;
+    } else if (s->mbus_int) {
+        assert(s->mbus_int == 0x8000);
+        vector = 0x7f;
     } else {
         vector = 0x0f;
     }
@@ -576,6 +586,9 @@ static uint64_t p20_sys_mmio_read(void *opaque, hwaddr addr, unsigned size)
     uint16_t val;
 
     switch (addr & ~1) {
+    case P20_SYS_MBERR:
+        val = s->mbus_err;
+        break;
     case P20_SYS_ERR:
         val = s->err;
         break;
@@ -600,6 +613,9 @@ static uint64_t p20_sys_mmio_read(void *opaque, hwaddr addr, unsigned size)
         break;
     case P20_SYS_MISC:
         val = s->misc;
+        if (val & MISC_HOLDMBUS) {
+            val |= MISC_TBUSY;
+        }
         break;
     case P20_SYS_CPUC:
         val = s->cpuc;
@@ -1135,7 +1151,8 @@ static void p20_sys_mmio_write(void *opaque, hwaddr addr, uint64_t val,
         s->user = val & 0xff;
         break;
     case 0x20:
-        s->err &= ~(ERR_MBTO);
+        s->mbus_int &= ~0x8000;
+        p20_sys_irq_update_job(s);
         break;
     case 0x40:
         p20_scsi_clear_int(s, SC_I_PERR);
@@ -1192,17 +1209,60 @@ static void p20_sys_mmio_write(void *opaque, hwaddr addr, uint64_t val,
     }
 }
 
-static void p20_mbus_write(void *opaque, hwaddr addr, uint64_t val,
-                            unsigned size)
+static void p20_mbus_berr(P20SysState *s, hwaddr offset)
 {
-    //P20SysState *s = P20_SYS(opaque);
-
+    if (!current_cpu) {
+        fprintf(stderr, "Multibus error not triggered by cpu?\n");
+        return;
+    }
+    CPUM68KState *env = cpu_env(current_cpu);
+    s->err |= ERR_MBTO;
+    current_cpu->exception_index = EXCP_ACCESS;
+    env->mmu.ar = MBUS_ADDR + offset;
+    DEVICE(s)->mem_reentrancy_guard.engaged_in_io = false;
+    cpu_loop_exit_restore(current_cpu, current_cpu->mem_io_pc);
 }
 
-static uint64_t p20_mbus_read(void *opaque, hwaddr addr, unsigned size)
+static void p20_mbus_write(void *opaque, hwaddr offset, uint64_t val,
+                            unsigned size)
 {
-    //P20SysState *s = P20_SYS(opaque);
+    P20SysState *s = P20_SYS(opaque);
+    if (offset < 0x80000) {
+        if (s->misc & MISC_DIAG_MB) {
+            return;
+        }
+        p20_mbus_berr(s, offset);
+    }
+    if (s->misc & MISC_DIAG_MB) {
+        hwaddr ramaddr;
+        int fault = p20_mapper_lookup(s, -1, &ramaddr, MBUS_RAM_ADDR + offset,
+                                      ACCESS_SUPER | ACCESS_DATA | ACCESS_STORE);
+        if (fault < 0) {
+            s->mbus_int |= 0x8000;
+            p20_sys_irq_update_job(s);
+            s->mbus_err = (offset >> 11) & 0xfe;
+        } else if (size == 2) {
+            stw_phys(s->sysmem, ramaddr, val);
+        } else {
+            /* byte swapped 16-bit bus */
+            ramaddr ^= 1;
+            stb_phys(s->sysmem, ramaddr, val);
+        }
+    }
+}
 
+static uint64_t p20_mbus_read(void *opaque, hwaddr offset, unsigned size)
+{
+    P20SysState *s = P20_SYS(opaque);
+    if (offset < 0x80000) {
+        if (s->misc & MISC_DIAG_MB) {
+            return 0;
+        }
+        p20_mbus_berr(s, offset);
+    }
+    if (s->misc & MISC_DIAG_MB) {
+        p20_mbus_berr(s, offset);
+    }
     return 0;
 }
 
@@ -1231,6 +1291,8 @@ static const MemoryRegionOps p20_mbus_ops = {
     .read = p20_mbus_read,
     .write = p20_mbus_write,
     .endianness = DEVICE_BIG_ENDIAN,
+    .impl.min_access_size = 1,
+    .impl.max_access_size = 2,
 };
 
 static void p20_sys_reset(DeviceState *dev)
@@ -1360,8 +1422,8 @@ static void p20_init(MachineState *machine)
     sysbus_realize_and_unref(SYS_BUS_DEVICE(sys), &error_fatal);
     sysbus_mmio_map(SYS_BUS_DEVICE(sys), 0, MAPPER_RAM_ADDR);
     sysbus_mmio_map(SYS_BUS_DEVICE(sys), 1, 0xe00000);
-    sysbus_mmio_map(SYS_BUS_DEVICE(sys), 2, 0xa70000);
-    sysbus_mmio_map(SYS_BUS_DEVICE(sys), 3, 0xb00000);
+    sysbus_mmio_map(SYS_BUS_DEVICE(sys), 2, SCSI_BUF_ADDR);
+    sysbus_mmio_map(SYS_BUS_DEVICE(sys), 3, MBUS_ADDR);
 
     mk68564_create(0xa00000, serial_hd(1), serial_hd(0), &sys->uart_irq[3]);
     mk68564_create(0xa10000, NULL, NULL, &sys->uart_irq[2]);
