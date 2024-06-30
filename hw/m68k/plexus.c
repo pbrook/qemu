@@ -1255,7 +1255,7 @@ static void p20_sys_mmio_write(void *opaque, hwaddr addr, uint64_t val,
     }
 }
 
-static void p20_mbus_berr(P20SysState *s, hwaddr offset)
+static void p20_mbus_berr(P20SysState *s, hwaddr offset, bool is_write)
 {
     if (!current_cpu) {
         fprintf(stderr, "Multibus error not triggered by cpu?\n");
@@ -1265,6 +1265,10 @@ static void p20_mbus_berr(P20SysState *s, hwaddr offset)
     s->err |= ERR_MBTO;
     current_cpu->exception_index = EXCP_ACCESS;
     env->mmu.ar = MBUS_ADDR + offset;
+    env->mmu.ssw = M68K_TM_040_SUPER | M68K_TM_040_DATA;
+    if (!is_write) {
+        env->mmu.ssw |= M68K_010_SSW_DF | M68K_RW_040;
+    }
     DEVICE(s)->mem_reentrancy_guard.engaged_in_io = false;
     cpu_loop_exit_restore(current_cpu, current_cpu->mem_io_pc);
 }
@@ -1277,7 +1281,7 @@ static void p20_mbus_write(void *opaque, hwaddr offset, uint64_t val,
         if (s->misc & MISC_DIAG_MB) {
             return;
         }
-        p20_mbus_berr(s, offset);
+        p20_mbus_berr(s, offset, true);
     }
     if (s->misc & MISC_DIAG_MB) {
         hwaddr ramaddr;
@@ -1304,10 +1308,10 @@ static uint64_t p20_mbus_read(void *opaque, hwaddr offset, unsigned size)
         if (s->misc & MISC_DIAG_MB) {
             return 0;
         }
-        p20_mbus_berr(s, offset);
+        p20_mbus_berr(s, offset, false);
     }
     if (s->misc & MISC_DIAG_MB) {
-        p20_mbus_berr(s, offset);
+        p20_mbus_berr(s, offset, false);
     }
     return 0;
 }
