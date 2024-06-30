@@ -115,10 +115,10 @@ static uint8_t mk68564_ack_irq(void *opaque)
     uint8_t mask;
     if (s->pending & 0xf0) {
         mask = 0x10;
-        vector = 0;
+        vector = 4;
     } else {
         mask = 0x01;
-        vector = 4;
+        vector = 0;
     }
     if (active & (mask << INTVEC_SPECIAL)) {
         mask <<= INTVEC_SPECIAL;
