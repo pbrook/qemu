@@ -751,28 +751,6 @@ static void p20_scsi_update_ptr(P20SysState *s)
     }
 }
 
-static void p20_scsi_diag(P20SysState *s, uint16_t val)
-{
-    int fault;
-    /* diag mode */
-    trace_p20_scsi_diag(val);
-    if ((val & SC_R_SC_BSY) == 0) {
-        val &= ~SC_R_AUTO;
-    }
-    s->sc_r = val;
-    if (val & SC_R_ARBIT) {
-        p20_scsi_raise_int(s, SC_I_ARBIT);
-    } else if ((val & SC_R_SCSIREQ) && (val & SC_R_AUTO)) {
-        if (p20_scsi_blk_ready(s)) {
-            fault = p20_scsi_blk_xfer(s, &s->scsi_buf[3]);
-            if (fault == 0) {
-                s->sc_r |= SC_R_SCSIACK;
-            }
-        }
-    }
-    p20_scsi_update_ptr(s);
-}
-
 static void p20_scsi_data_run(P20SysState *s, int busmode)
 {
     int fault;
@@ -979,6 +957,27 @@ static void p20_scsi_reg(P20SysState *s, uint16_t val)
             s->sc_r |= SC_R_SC_BSY;
             s->phase = PHASE_ARB;
         }
+        if (val & SC_R_SCSIRST) {
+            if ((s->sc_r & SC_R_SC_BSY) == 0) {
+                s->sc_r &= ~SC_R_AUTO;
+            }
+            if (p20_scsi_blk_ready(s)) {
+                uint8_t dummy;
+                uint8_t *ptr;
+                int fault;
+                if ((s->misc & MISC_NSCSIDL) == 0 && (s->sc_r & SC_R_SCSIIO) == 0) {
+                    /* Ignore out bytes when debug latch enabled */
+                    ptr = &dummy;
+                } else {
+                    ptr = &s->scsi_buf[3];
+                }
+                fault = p20_scsi_blk_xfer(s, ptr);
+                if (fault == 0) {
+                    s->sc_r |= SC_R_SCSIACK;
+                }
+            }
+            p20_scsi_update_ptr(s);
+        }
         break;
     case PHASE_ARB:
         if (val & SC_R_SC_SEL) {
@@ -1103,11 +1102,7 @@ static void p20_sys_mmio_write(void *opaque, hwaddr addr, uint64_t val,
         s->sc_p = (s->sc_p & 0xffff0000) | val;
         break;
     case P20_SYS_SC_R:
-        if (val & SC_R_SCSIRST) {
-            p20_scsi_diag(s, val);
-        } else {
-            p20_scsi_reg(s, val);
-        }
+        p20_scsi_reg(s, val);
         break;
     case P20_SYS_MISC:
         val &= ~MISC_SPARE;
