@@ -13,9 +13,12 @@
 #include "hw/irq.h"
 #include "hw/sysbus.h"
 #include "qemu/timer.h"
+#include "hw/qdev-properties.h"
 #include "hw/rtc/mc146818rtc_regs.h"
 #include "hw/rtc/p20-rtc.h"
 #include "trace.h"
+
+#define RTC_REG_USER 0xe
 
 static uint32_t rtc_periodic_clock_ticks(P20RtcState *s)
 {
@@ -90,7 +93,18 @@ static void p20_rtc_write(void *opaque, hwaddr addr,
         /* cannot write to them */
         break;
     default:
-        s->cmos_data[addr] = data;
+        if (addr < sizeof(s->cmos_data)) {
+            if (s->cmos_data[addr] != data) {
+                s->cmos_data[addr] = data;
+                if (s->filename && addr >= RTC_REG_USER) {
+                    FILE *f = fopen(s->filename, "w+");
+                    if (f) {
+                        fwrite(s->cmos_data + RTC_REG_USER, 1, sizeof(s->cmos_data) - RTC_REG_USER, f);
+                        fclose(f);
+                    }
+                }
+            }
+        }
         break;
     }
 }
@@ -113,7 +127,11 @@ static uint64_t p20_rtc_read(void *opaque, hwaddr addr, unsigned size)
         break;
 #endif
     default:
-        ret = s->cmos_data[addr];
+        if (addr < sizeof(s->cmos_data)) {
+            ret = s->cmos_data[addr];
+        } else {
+            return 0;
+        }
         break;
     }
     trace_p20_rtc_read(addr, ret);
@@ -140,6 +158,13 @@ static void rtc_realizefn(DeviceState *dev, Error **errp)
     s->cmos_data[RTC_REG_C] = 0x00;
     s->cmos_data[RTC_REG_D] = 0;//0x80;
 
+    if (s->filename) {
+        FILE *f = fopen(s->filename, "r");
+        if (f) {
+            (void)!fread(s->cmos_data + RTC_REG_USER, 1, sizeof(s->cmos_data) - RTC_REG_USER, f);
+            fclose(f);
+        }
+    }
     s->periodic_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, rtc_periodic_timer, s);
 
     memory_region_init_io(&s->io, OBJECT(s), &p20_rtc_mmio_ops, s, "p20-rtc", 0x80);
@@ -154,12 +179,18 @@ static void rtc_reset(DeviceState *dev)
     s->cmos_data[RTC_REG_B] &= ~REG_B_SQWE;
 }
 
+static Property p20_rtc_properties[] = {
+    DEFINE_PROP_STRING("file", P20RtcState, filename),
+    DEFINE_PROP_END_OF_LIST(),
+};
+
 static void rtc_class_initfn(ObjectClass *klass, void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
 
     dc->realize = rtc_realizefn;
     dc->reset = rtc_reset;
+    device_class_set_props(dc, p20_rtc_properties);
     //dc->vmsd = &vmstate_rtc;
     //rc->phases.enter = rtc_reset_enter;
     //rc->phases.hold = rtc_reset_hold;

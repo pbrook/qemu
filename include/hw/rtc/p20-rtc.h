@@ -13,11 +13,13 @@ struct P20RtcState {
     SysBusDevice parent_obj;
 
     MemoryRegion io;
-    uint8_t cmos_data[128];
+    uint8_t cmos_data[64];
     qemu_irq irq;
     /* periodic timer */
     QEMUTimer *periodic_timer;
     int64_t next_periodic_time;
+
+    char *filename;
 };
 
 #endif /* HW_RTC_P20_RTC_H */
