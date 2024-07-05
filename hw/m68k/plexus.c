@@ -1251,6 +1251,9 @@ static void p20_sys_mmio_write(void *opaque, hwaddr addr, uint64_t val,
         /* Reset actions */
         qemu_log_mask(LOG_UNIMP, "p20_sys_mmio_write unimplemented reset @ 0x%"HWADDR_PRIx"\n", addr);
         break;
+    case 0x1fe:
+        fprintf(stderr, "%c", (int)val & 0xff);
+        break;
     default:
         qemu_log_mask(LOG_UNIMP, "p20_sys_mmio_write unimplemented @ 0x%"HWADDR_PRIx" val 0x%04x\n", addr, (uint16_t)val);
         break;
