@@ -78,9 +78,13 @@ throwaway:
         case 8:
             ssw = cpu_lduw_mmuidx_ra(env, sp, MMU_KERNEL_IDX, 0);
             if (ssw & M68K_010_SSW_RR) {
-                //cpu_abort(env_cpu(env), "rte resume");
-                // FIXME: This doesn't work? It just skips the insn
-                // Seems to be close enough!
+                /* This is intended to allow software re-run, where on restart
+                 * the cpu skips the bus cycles that faulted.  This would be
+                 * expecially ticky for us to implement because the 68010
+                 * breaks 32-bit accesses into two separare bus cycles.
+                 * We skip the whole insn, which seems to be close enough for
+                 * all known software!
+                 */
                 uint16_t insn_size = cpu_lduw_mmuidx_ra(env, sp + 20, MMU_KERNEL_IDX, 0);
                 env->pc += insn_size;
             }
