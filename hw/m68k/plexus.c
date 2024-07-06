@@ -456,6 +456,7 @@ static void p20_mapper_write(void *opaque, hwaddr addr, uint64_t val,
         idxmap = 1 << MMU_KERNEL_IDX;
         addr &= (1<< MAPPER_VBITS) - 1;
     } else {
+        // TODO: Only do a TLB flush if the olf page belonged to this address space
         idxmap = 1 << MMU_USER_IDX;
     }
     tlb_flush_page_by_mmuidx_all_cpus_synced(current_cpu,
@@ -1183,7 +1184,12 @@ static void p20_sys_mmio_write(void *opaque, hwaddr addr, uint64_t val,
         s->trace = val;
         break;
     case P20_SYS_USER:
-        s->user = val & 0xff;
+        val &= 0xff;
+        if (s->user != val) {
+            s->user = val;
+            tlb_flush_by_mmuidx_all_cpus_synced(current_cpu,
+                                                1 << MMU_USER_IDX);
+        }
         break;
     case 0x20:
         s->mbus_int &= ~0x8000;
